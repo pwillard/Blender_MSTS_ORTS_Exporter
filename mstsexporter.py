@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (4, 4),
+                "version": (4, 5),
                 "blender": (2, 80, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -28,6 +28,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
    
 
 REVISION HISTORY
+2024-04-03      Released V4.5  - pkw - Handling issues created by Blender 4.1 deprecating smoothing related APIs.
 2023-07-13      Released V4.4  - pkw
                 Added support for exporting texture references as DDS files instead of just ACE files using a checkbox.
                 Like the ACE file export, it changes *ALL* texture references to DDS when checked.
@@ -124,6 +125,8 @@ RetainNames = False   # user option, when true, the exporter disables mesh
                       # consolidation and hierarchy collapse optimizations
                       # reduces frame rates due to more Draw Calls
 UseDDS = False
+
+BlenderVersion = bpy.app.version    # returns tuple of (major, minor, subversion)
                       
 
 #####################################       
@@ -1458,7 +1461,8 @@ def AddObject( distanceLevel, object, iHierarchy, relativeMatrix ):
             depsgraph = bpy.context.evaluated_depsgraph_get()
             ob_to_convert = object.evaluated_get(depsgraph)
             mesh = ob_to_convert.to_mesh()
-            mesh.calc_normals_split()
+            if BlenderVersion < (4,1,0):    # cope with loss of this feature in Blender 4.1 + 
+                mesh.calc_normals_split()
             mesh.calc_loop_triangles()
 
             AddMesh( distanceLevel, mesh, iHierarchy, relativeMatrix, normalsProperty, object.name )
