@@ -2,7 +2,7 @@
 
 December 12, 2024
 
-Update the exporter to support Blender 4.3, dealing with some deprecated items while still maintaining the ability to run on older versions of Blender (Like 3.6 LTS). The API is deprecating a `mesh` related call that was used by the exporter. When using Blender 4.x, the newer API is method is used.
+Update the exporter to support Blender 4.3, dealing with some deprecated items while still maintaining the ability to run on older versions of Blender (Like 3.6 LTS). The API is deprecating a `mesh` related call that was used by the exporter. When using Blender 4.x, the newer API method is used.
 
 April 3, 2024
 
