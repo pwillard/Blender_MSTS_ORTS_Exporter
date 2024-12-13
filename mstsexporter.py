@@ -105,6 +105,7 @@ IDEAS FUTURE
 
 import bpy
 import os
+import re
 from math import radians
 from bpy.props import StringProperty, EnumProperty, BoolProperty
 import mathutils
@@ -1767,7 +1768,19 @@ def ExportShapeFile( collectionName, MSTSFilePath ):
         if childName.startswith( 'MAIN_' ):
             if LodDistanceFromName( childName ) != None:
                 lodNames.append( childName )
-    lodNames.sort()  #this sort fails if name does not have proper _xxxx suffix
+    
+    # the natsort lambda splits the input string "s" into groups of non-digits and digits using a regex
+    # and enables sorting the "lodNames" list correctly even without leading zeros in the lod distance.
+    # it is equivalent to using "lodNames.sort(key=int)" for groups of digits in a string and lodNames.sort()
+    # for the remaining non-numerical characters. but all of it happens in a single call to ".sort()".
+    # it is case-insensitive for the remaining non-numerical characters due to the ".tolower()" call.
+    #
+    # examples:
+    # ['MAIN_1200', 'MAIN_400', 'MAIN_150'] would be sorted into ['MAIN_150', 'MAIN_400', 'MAIN_1200']
+    # ['MAIN_1200', 'MAIN_0400', 'MAIN_0150'] would be sorted into ['MAIN_0150', 'MAIN_0400', 'MAIN_1200']
+    # ['main_1200', 'MAIN_0400randomstuff', 'mAiN_150'] would be sorted into ['mAiN_150', 'MAIN_0400randomstuff', 'main_1200']
+    natsort = lambda s: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)]
+    lodNames.sort(key=natsort)
 
     global LodCollections
     LodCollections = []
