@@ -339,7 +339,7 @@ def RecreateShaderNodes( m ):
     m.node_tree.nodes.active = None
     # setup specularity
 
-    if BlenderVersion < (4, 1, 0):
+    if BlenderVersion < (4, 0, 0):
         if m.msts.Lighting == 'SPECULAR25':
             BNode.inputs['Specular'].default_value = 0.1
             BNode.inputs['Roughness'].default_value = 0.3
