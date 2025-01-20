@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (4, 6),
+                "version": (4, 7),
                 "blender": (3, 6, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -31,6 +31,8 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2025-01-19      Released V4.7  - pkw - Fix for the deprecated specular which is now IOR (Index of Refraction) in 4.x
+                Note: It was causing the "recreateShaderNodes function to fail and cause the material nodes to all become disconnected.
 2024-12-12      Released V4.6  - pkw - Fix for the deprecated to.mesh in 4.x
 2024-04-03      Released V4.5  - pkw - Handling issues created by Blender 4.1 deprecating smoothing related APIs.
 2023-07-13      Released V4.4  - pkw
@@ -85,14 +87,14 @@ REVISION HISTORY
 
 
 TODO FUTURE
-    - add a progress bar ( when available in the Blender API )
+    - add a progress bar ( when available in the Blender API ) Still not available in 20205.
     - document or remove hidden Normals override options ( superceded by Blender's new Normals Modifier )
 
 IDEAS FUTURE
     - add support for curves, particle systems, dupliverts
     - support undocumented MSTS capability, eg
         - Wrap, Clamp, Extend etc
-        - double sided faces
+        - double sided faces (still can't do then correctly in Blender 4.x)
         - bump mapping and environmental reflections
         - AddATex, SubractATex, etc and other undocumented shaders
         - zBias
@@ -335,18 +337,32 @@ def RecreateShaderNodes( m ):
     UNode.select = False
     m.node_tree.nodes.active = None
     # setup specularity
-    if m.msts.Lighting == 'SPECULAR25':
-        BNode.inputs['Specular'].default_value = 0.1
-        BNode.inputs['Roughness'].default_value = 0.3
-    elif m.msts.Lighting == 'SPECULAR750':
-        BNode.inputs['Specular'].default_value = 0.1
-        BNode.inputs['Roughness'].default_value = 0.1
+
+    if BlenderVersion < (4, 1, 0):
+        if m.msts.Lighting == 'SPECULAR25':
+            BNode.inputs['Specular'].default_value = 0.1
+            BNode.inputs['Roughness'].default_value = 0.3
+        elif m.msts.Lighting == 'SPECULAR750':  
+            BNode.inputs['Specular'].default_value = 0.1
+            BNode.inputs['Roughness'].default_value = 0.1
+        else:
+            BNode.inputs['Specular'].default_value = 0.0
+            BNode.inputs['Roughness'].default_value = 1.0
     else:
-        BNode.inputs['Specular'].default_value = 0.0
-        BNode.inputs['Roughness'].default_value = 1.0
+        if m.msts.Lighting == 'SPECULAR25':
+            BNode.inputs['IOR'].default_value = 0.1
+            BNode.inputs['Roughness'].default_value = 0.3
+        elif m.msts.Lighting == 'SPECULAR750':  
+            BNode.inputs['IOR'].default_value = 0.1
+            BNode.inputs['Roughness'].default_value = 0.1
+        else:
+            BNode.inputs['IOR'].default_value = 0.0
+            BNode.inputs['Roughness'].default_value = 1.0
+         
     # setup image
     if os.path.exists( bpy.path.abspath(m.msts.BaseColorFilepath) ):
         TNode.image = GetImage( m.msts.BaseColorFilepath )
+
     # setup uvs
     UNode.uv_map = 'UVMap'
     # link the nodes

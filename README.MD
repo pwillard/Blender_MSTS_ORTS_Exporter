@@ -1,5 +1,11 @@
 # README
 
+January 19, 2024
+
+Release 4.7.0
+
+This update adds a fix for the Specular material setting that has been deprecated as an attachment in the Principled BSDF shader in place of a Incidence of refraction setting. It will still use the old setting for older releases of Blender to keep the functionality. however, these settings have no impact on the exported model.
+
 December 12, 2024
 
 Update the exporter to support Blender 4.3, dealing with some deprecated items while still maintaining the ability to run on older versions of Blender (Like 3.6 LTS). The API is deprecating a `mesh` related call that was used by the exporter. When using Blender 4.x, the newer API method is used.
