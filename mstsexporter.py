@@ -1,13 +1,13 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (4, 7),
-                "blender": (3, 6, 0),
+                "version": (4, 8),
+                "blender": (2, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
                 "category": "Import-Export"}
 
 # Updated for Blender 4.0+ compatibility with fallback for older versions
-# Version 4.6
+# Version 4.8 2025-10-08
 
 
 '''
@@ -31,6 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2025-10-08      Released V4.8  - pkw - Fix for Blender 4.5 Update for changes related to shader sockets
 2025-01-19      Released V4.7  - pkw - Fix for the deprecated specular which is now IOR (Index of Refraction) in 4.x
                 Note: It was causing the "recreateShaderNodes function to fail and cause the material nodes to all become disconnected.
 2024-12-12      Released V4.6  - pkw - Fix for the deprecated to.mesh in 4.x
@@ -315,67 +316,99 @@ def GetImage( filepath ):
 
 #####################################
 # recreate the shader nodes to represent the msts settings
-def RecreateShaderNodes( m ):
 
-    # remove any existing nodes
+def RecreateShaderNodes(m):
+    """
+    Safely recreate shader nodes across Blender 3.6 → 4.5.
+    Fixes issues with Update Shader checkbox causing disconnected nodes in Blender 4.x.
+
+    - Detects correct socket names dynamically (Base Color / Alpha / IOR / Specular).
+    - Rebuilds node tree safely without throwing errors on missing sockets.
+    - Maintains compatibility with legacy 3.x setups.
+    - Prints a confirmation line to the system console when completed.
+    """
+    import bpy, os
+
+    # enable shader nodes
     m.use_nodes = True
-    m.node_tree.nodes.clear()
-    m.node_tree.links.clear()
-    # create the nodes
-    MNode = m.node_tree.nodes.new('ShaderNodeOutputMaterial')
-    BNode = m.node_tree.nodes.new('ShaderNodeBsdfPrincipled')
-    TNode = m.node_tree.nodes.new('ShaderNodeTexImage')
-    UNode = m.node_tree.nodes.new('ShaderNodeUVMap')
-    # layout the shader screen
-    MNode.location.x = 300
-    BNode.location.x = 0
-    TNode.location.x = -300
-    UNode.location.x = -550
-    # Set active node
-    MNode.select = False
-    BNode.select = False
-    TNode.select = False
-    UNode.select = False
-    m.node_tree.nodes.active = None
-    # setup specularity
+    nodes = m.node_tree.nodes
+    links = m.node_tree.links
 
-    if BlenderVersion < (4, 0, 0):
-        if m.msts.Lighting == 'SPECULAR25':
-            BNode.inputs['Specular'].default_value = 0.1
-            BNode.inputs['Roughness'].default_value = 0.3
-        elif m.msts.Lighting == 'SPECULAR750':  
-            BNode.inputs['Specular'].default_value = 0.1
-            BNode.inputs['Roughness'].default_value = 0.1
-        else:
-            BNode.inputs['Specular'].default_value = 0.0
-            BNode.inputs['Roughness'].default_value = 1.0
+    # remove any existing nodes to start clean
+    nodes.clear()
+
+    # create required nodes
+    output = nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    tex = nodes.new("ShaderNodeTexImage")
+    uv = nodes.new("ShaderNodeUVMap")
+
+    # position nodes for readability in the Shader Editor
+    output.location = (300, 0)
+    bsdf.location = (0, 0)
+    tex.location = (-300, 0)
+    uv.location = (-550, 0)
+
+    # --- Image Texture Handling ---
+    # Load image if valid path is set in MSTS material properties
+    img_path = bpy.path.abspath(m.msts.BaseColorFilepath)
+    if os.path.exists(img_path):
+        tex.image = bpy.data.images.load(img_path, check_existing=True)
+
+    # --- Node Linking ---
+    # Connect Base Color (handle Blender naming variations)
+    base_color_input = bsdf.inputs.get("Base Color") or bsdf.inputs.get("BaseColor")
+    if base_color_input and tex.outputs.get("Color"):
+        links.new(base_color_input, tex.outputs["Color"])
+
+    # Connect Alpha channel for transparency support
+    if bsdf.inputs.get("Alpha") and tex.outputs.get("Alpha"):
+        links.new(bsdf.inputs["Alpha"], tex.outputs["Alpha"])
+
+    # Connect UV map to texture
+    if tex.inputs.get("Vector") and uv.outputs.get("UV"):
+        links.new(tex.inputs["Vector"], uv.outputs["UV"])
+
+    # Connect BSDF to Material Output surface
+    if output.inputs.get("Surface") and bsdf.outputs.get("BSDF"):
+        links.new(output.inputs["Surface"], bsdf.outputs["BSDF"])
+
+    # --- Specularity / IOR Handling ---
+    # Blender 4.0+ removed Specular; uses Index of Refraction instead.
+    if bpy.app.version < (4, 0, 0):
+        # Legacy Specular workflow
+        spec_input = bsdf.inputs.get("Specular")
+        if spec_input:
+            if m.msts.Lighting == 'SPECULAR25':
+                spec_input.default_value = 0.1
+                bsdf.inputs["Roughness"].default_value = 0.3
+            elif m.msts.Lighting == 'SPECULAR750':
+                spec_input.default_value = 0.1
+                bsdf.inputs["Roughness"].default_value = 0.1
+            else:
+                spec_input.default_value = 0.0
+                bsdf.inputs["Roughness"].default_value = 1.0
     else:
-        if m.msts.Lighting == 'SPECULAR25':
-            BNode.inputs['IOR'].default_value = 0.1
-            BNode.inputs['Roughness'].default_value = 0.3
-        elif m.msts.Lighting == 'SPECULAR750':  
-            BNode.inputs['IOR'].default_value = 0.1
-            BNode.inputs['Roughness'].default_value = 0.1
-        else:
-            BNode.inputs['IOR'].default_value = 0.0
-            BNode.inputs['Roughness'].default_value = 1.0
-         
-    # setup image
-    if os.path.exists( bpy.path.abspath(m.msts.BaseColorFilepath) ):
-        TNode.image = GetImage( m.msts.BaseColorFilepath )
+        # Blender 4.x IOR workflow
+        ior_input = bsdf.inputs.get("IOR")
+        if ior_input:
+            if m.msts.Lighting == 'SPECULAR25':
+                ior_input.default_value = 1.25
+                bsdf.inputs["Roughness"].default_value = 0.3
+            elif m.msts.Lighting == 'SPECULAR750':
+                ior_input.default_value = 1.75
+                bsdf.inputs["Roughness"].default_value = 0.1
+            else:
+                ior_input.default_value = 1.0
+                bsdf.inputs["Roughness"].default_value = 1.0
 
-    # setup uvs
-    UNode.uv_map = 'UVMap'
-    # link the nodes
-    m.node_tree.links.new(MNode.inputs['Surface'],BNode.outputs['BSDF'])
-    m.node_tree.links.new(BNode.inputs['Base Color'],TNode.outputs['Color'])
-    if m.msts.Transparency != "OPAQUE":
-        m.node_tree.links.new(BNode.inputs['Alpha'],TNode.outputs['Alpha'])
-    m.node_tree.links.new(TNode.inputs['Vector'],UNode.outputs['UV'])
-    # TODO Add support for additional msts lighting modes, eg cruciform, etc
+    # mark Principled BSDF as active node
+    m.node_tree.nodes.active = bsdf
 
-#####################################
-# called when the MSTS material panel settings are changed
+    # console confirmation
+    print(f"✅ Shader updated for '{{m.name}}' using Blender {{bpy.app.version_string}}")
+
+
 def SetDefaultViewportShading( screenName ):
 
     for screen in bpy.data.screens:
