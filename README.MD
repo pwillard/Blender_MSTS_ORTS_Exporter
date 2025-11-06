@@ -2,6 +2,15 @@
 
 October 8, 2025
 
+Release 4.8.1
+
+Repackage for easier installation in Blender.
+
+The ADD-ON is packaged and made available under the *Releases* section of this repository.
+The Documentation ane examples are packaged a separate Zip file.
+
+This has been done to make the installation cleaner and easier. The Add-On code no longer needs to be extracted if you just want the documentation and only the add-on code gets installed into the Blender environment.  This eliminates some extra steps. 
+
 Release 4.8.0
 
 This update adds support for Blender 4.5 LTS, which changed some shader sockets that broke the "UPDATE SHADER" checkbox in the exporter.
