@@ -4,7 +4,7 @@ October 8, 2025
 
 Release 4.8.1
 
-Repackage for easier installation in Blender.
+Repackage for easier installation in Blender.  **Use the Releases link on the right.**
 
 The ADD-ON is packaged and made available under the *Releases* section of this repository.
 The Documentation ane examples are packaged a separate Zip file.
