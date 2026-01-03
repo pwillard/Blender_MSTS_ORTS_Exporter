@@ -1,10 +1,10 @@
 bl_info = {
-    "name": "MSTS / OpenRails Shape Exporter (compat)",
+    "name": "MSTS / OpenRails Shape Exporter",
     "author": "Pete Willard",
     "version": (4, 8, 2),
-    "blender": (4, 0, 0),
+    "blender": (3, 8, 0),
     "location": "File > Export > OpenRails/MSTS (.s)",
-    "description": "Exports Train Simulator shapes (compat package name)",
+    "description": "Exports Train Simulator shapes",
     "category": "Import-Export",
 }
 

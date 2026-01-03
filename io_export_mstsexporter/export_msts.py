@@ -1,13 +1,13 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (4, 9),
-                "blender": (2, 8, 0),
+                "version": (4, 8, 2),
+                "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
                 "category": "Import-Export"}
 
 # Updated for Blender 4.0+ compatibility with fallback for older versions
-# Version 4.8 2025-10-08
+# Version 4.6
 
 
 '''
@@ -31,8 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
-2025-11-25      Released V4.9  - PKW - Fix for empty "BaseColorFilePath" in MSTS Materials Update.
-2025-10-08      Released V4.8  - pkw - Fix for Blender 4.5 Update for changes related to shader sockets
+2025-01-25      Released V4.8  - pkw - Version 4.5 Compatibility - shader node update
 2025-01-19      Released V4.7  - pkw - Fix for the deprecated specular which is now IOR (Index of Refraction) in 4.x
                 Note: It was causing the "recreateShaderNodes function to fail and cause the material nodes to all become disconnected.
 2024-12-12      Released V4.6  - pkw - Fix for the deprecated to.mesh in 4.x
@@ -317,67 +316,114 @@ def GetImage( filepath ):
 
 #####################################
 # recreate the shader nodes to represent the msts settings
+""" def RecreateShaderNodes( m ):
+
+    # remove any existing nodes
+    m.use_nodes = True
+    m.node_tree.nodes.clear()
+    m.node_tree.links.clear()
+    # create the nodes
+    MNode = m.node_tree.nodes.new('ShaderNodeOutputMaterial')
+    BNode = m.node_tree.nodes.new('ShaderNodeBsdfPrincipled')
+    TNode = m.node_tree.nodes.new('ShaderNodeTexImage')
+    UNode = m.node_tree.nodes.new('ShaderNodeUVMap')
+    # layout the shader screen
+    MNode.location.x = 300
+    BNode.location.x = 0
+    TNode.location.x = -300
+    UNode.location.x = -550
+    # Set active node
+    MNode.select = False
+    BNode.select = False
+    TNode.select = False
+    UNode.select = False
+    m.node_tree.nodes.active = None
+    # setup specularity
+
+    if BlenderVersion < (4, 0, 0):
+        if m.msts.Lighting == 'SPECULAR25':
+            BNode.inputs['Specular'].default_value = 0.1
+            BNode.inputs['Roughness'].default_value = 0.3
+        elif m.msts.Lighting == 'SPECULAR750':  
+            BNode.inputs['Specular'].default_value = 0.1
+            BNode.inputs['Roughness'].default_value = 0.1
+        else:
+            BNode.inputs['Specular'].default_value = 0.0
+            BNode.inputs['Roughness'].default_value = 1.0
+    else:
+        if m.msts.Lighting == 'SPECULAR25':
+            BNode.inputs['IOR'].default_value = 0.1
+            BNode.inputs['Roughness'].default_value = 0.3
+        elif m.msts.Lighting == 'SPECULAR750':  
+            BNode.inputs['IOR'].default_value = 0.1
+            BNode.inputs['Roughness'].default_value = 0.1
+        else:
+            BNode.inputs['IOR'].default_value = 0.0
+            BNode.inputs['Roughness'].default_value = 1.0
+         
+    # setup image
+    if os.path.exists( bpy.path.abspath(m.msts.BaseColorFilepath) ):
+        TNode.image = GetImage( m.msts.BaseColorFilepath )
+
+    # setup uvs
+    UNode.uv_map = 'UVMap'
+    # link the nodes
+    m.node_tree.links.new(MNode.inputs['Surface'],BNode.outputs['BSDF'])
+    m.node_tree.links.new(BNode.inputs['Base Color'],TNode.outputs['Color'])
+    if m.msts.Transparency != "OPAQUE":
+        m.node_tree.links.new(BNode.inputs['Alpha'],TNode.outputs['Alpha'])
+    m.node_tree.links.new(TNode.inputs['Vector'],UNode.outputs['UV'])
+    # TODO Add support for additional msts lighting modes, eg cruciform, etc """
 
 def RecreateShaderNodes(m):
-    """
-    Safely recreate shader nodes across Blender 3.6 → 4.5.
-    Fixes issues with Update Shader checkbox causing disconnected nodes in Blender 4.x.
-
-    - Detects correct socket names dynamically (Base Color / Alpha / IOR / Specular).
-    - Rebuilds node tree safely without throwing errors on missing sockets.
-    - Maintains compatibility with legacy 3.x setups.
-    - Prints a confirmation line to the system console when completed.
-    """
+    """Safely recreate shader nodes across Blender 3.6 → 4.5"""
     import bpy, os
 
-    # enable shader nodes
     m.use_nodes = True
     nodes = m.node_tree.nodes
     links = m.node_tree.links
 
-    # remove any existing nodes to start clean
+    # Clear existing nodes and links
     nodes.clear()
 
-    # create required nodes
+    # Create required nodes
     output = nodes.new("ShaderNodeOutputMaterial")
     bsdf = nodes.new("ShaderNodeBsdfPrincipled")
     tex = nodes.new("ShaderNodeTexImage")
     uv = nodes.new("ShaderNodeUVMap")
 
-    # position nodes for readability in the Shader Editor
+    # Layout positions
     output.location = (300, 0)
     bsdf.location = (0, 0)
     tex.location = (-300, 0)
     uv.location = (-550, 0)
 
-    # --- Image Texture Handling ---
-    # Load image if valid path is set in MSTS material properties
+    # --- Image Texture ---
     img_path = bpy.path.abspath(m.msts.BaseColorFilepath)
     if os.path.exists(img_path):
         tex.image = bpy.data.images.load(img_path, check_existing=True)
 
-    # --- Node Linking ---
-    # Connect Base Color (handle Blender naming variations)
+    # --- Connect nodes safely ---
+    # Base Color
     base_color_input = bsdf.inputs.get("Base Color") or bsdf.inputs.get("BaseColor")
     if base_color_input and tex.outputs.get("Color"):
         links.new(base_color_input, tex.outputs["Color"])
 
-    # Connect Alpha channel for transparency support
+    # Alpha (transparency)
     if bsdf.inputs.get("Alpha") and tex.outputs.get("Alpha"):
         links.new(bsdf.inputs["Alpha"], tex.outputs["Alpha"])
 
-    # Connect UV map to texture
+    # UV Map connection
     if tex.inputs.get("Vector") and uv.outputs.get("UV"):
         links.new(tex.inputs["Vector"], uv.outputs["UV"])
 
-    # Connect BSDF to Material Output surface
+    # BSDF to Output
     if output.inputs.get("Surface") and bsdf.outputs.get("BSDF"):
         links.new(output.inputs["Surface"], bsdf.outputs["BSDF"])
 
     # --- Specularity / IOR Handling ---
-    # Blender 4.0+ removed Specular; uses Index of Refraction instead.
     if bpy.app.version < (4, 0, 0):
-        # Legacy Specular workflow
+        # Pre-4.0 used Specular input
         spec_input = bsdf.inputs.get("Specular")
         if spec_input:
             if m.msts.Lighting == 'SPECULAR25':
@@ -390,7 +436,7 @@ def RecreateShaderNodes(m):
                 spec_input.default_value = 0.0
                 bsdf.inputs["Roughness"].default_value = 1.0
     else:
-        # Blender 4.x IOR workflow
+        # Blender 4.x uses IOR
         ior_input = bsdf.inputs.get("IOR")
         if ior_input:
             if m.msts.Lighting == 'SPECULAR25':
@@ -403,13 +449,15 @@ def RecreateShaderNodes(m):
                 ior_input.default_value = 1.0
                 bsdf.inputs["Roughness"].default_value = 1.0
 
-    # mark Principled BSDF as active node
+    # Set active and finalize
     m.node_tree.nodes.active = bsdf
-
-    # console confirmation
-    print(f"✅ Shader updated for '{{m.name}}' using Blender {{bpy.app.version_string}}")
+    print(f"Shader updated for '{m.name}' ({bpy.app.version_string})")
 
 
+
+
+#####################################
+# called when the MSTS material panel settings are changed
 def SetDefaultViewportShading( screenName ):
 
     for screen in bpy.data.screens:
@@ -475,25 +523,29 @@ def UpdateMSTSImage( self, context ):
 # called when the MSTS material panel settings are changed
 def UpdateMSTSMaterial( self, context ):
 
-    if hasattr(context, 'material') and context.material is not None:
-        mstsmaterial = context.material.msts
-        blM = context.material
+    if hasattr(context, 'material'):
+        if context.material != None:
+            mstsmaterial= context.material.msts
+            if mstsmaterial.UpdateNodes:
 
-        blM.use_backface_culling = True
+                blM = context.material
+                blM.use_backface_culling = True
 
-        if blM.msts.Transparency == "OPAQUE":
-            blM.blend_method = "OPAQUE"
-        elif blM.msts.Transparency == "CLIP":
-            blM.blend_method = "CLIP"
-        elif blM.msts.Transparency in {"ALPHA", "ALPHA_SORT"}:
-            blM.blend_method = "BLEND"
+                if blM.msts.Transparency == "OPAQUE":
+                    blM.blend_method = "OPAQUE"
+                elif blM.msts.Transparency == "CLIP":
+                    blM.blend_method = "CLIP"
+                elif blM.msts.Transparency == "ALPHA":
+                    blM.blend_method = "BLEND"
+                elif blM.msts.Transparency == "ALPHA_SORT":
+                    blM.blend_method = "BLEND"
 
-        # Only rebuild shader nodes when explicitly requested and path is set
-        if mstsmaterial.UpdateNodes and mstsmaterial.BaseColorFilepath:
-            RecreateShaderNodes( blM )
 
-        SetDefaultViewportShading( 'Layout' )
-        SetDefaultViewportShading( 'UV Editing' )
+
+                RecreateShaderNodes( blM )
+
+                SetDefaultViewportShading( 'Layout' )
+                SetDefaultViewportShading( 'UV Editing' )
 
 #####################################
 class msts_material_panel(bpy.types.Panel):
@@ -574,8 +626,8 @@ class msts_material_props(bpy.types.PropertyGroup):
 
     UpdateNodes : BoolProperty(
                 name='Update Shader',
-                description = 'Rebuild shader nodes from BaseColorFilepath',
-                default = False,
+                description = 'Change shader nodes to match these settings',
+                default = True ,
                 update= UpdateMSTSMaterial,
                 )
 
@@ -858,6 +910,7 @@ def iPrimStateAdd( iVertexState, zBias, iShader, alphaTestMode, iLightConfig, iT
     # we didn't find it so add it
     i = len( ExportShape.PrimStates )
     newPrimState = PrimState()
+    iHierarchy = ExportShape.VertexStates[iVertexState].iMatrix
     newPrimState.Label = ExportShape.Matrices[iHierarchy].Label
     if len( iTextures) > 0:
         texture = ExportShape.Textures[iTextures[0]]
@@ -1181,4 +1234,1596 @@ def ExtendBoundsForMesh( mesh, offsetMatrix ):
 def HasGeometry( object ):
 
     # make sure its not a camera, light etc that do not have geometry
-    return object.type in ['MESH']  # TODO add sup
+    return object.type in ['MESH']  # TODO add support for 'CURVE','SURFACE','META','FONT'
+
+#####################################
+# adds to a sub_object in this distance_level
+# iPointOffset informs the difference between the blender vertex index and the msts vertex index
+# normal specifies an override to the blender supplied normal, eg Normals.Face .Out .Up .Smooth etc
+# tranform the mesh points by relativeMatrix
+# apply the normalOverrides
+# generate triangle lists
+def AddTriangleToSubObject( mesh, mstsMaterial, blTriangle , windingOrder, offsetMatrix, iPointOffset ):
+
+    color1 = 0xFFFFFFFF   # vertex colors ( when vertex color layer not present )
+    color2 = 0xFF000000
+
+    normalOverride = mstsMaterial.normalOverride
+    if normalOverride == Normals.Face:         # if we didn't specify a special normal mesh property
+        if blTriangle.use_smooth:         # Per face override for smooth normals
+            normalOverride = Normals.Smooth
+
+    subObject = mstsMaterial.subObject
+    vertexSet = subObject.VertexSets[mstsMaterial.iVertexState]
+
+    iPrimitive = mstsMaterial.iPrimitive
+    primitive = subObject.Primitives[iPrimitive]
+
+    for indexList in windingOrder:
+        mstsTriangle = []
+        for i in indexList:
+            iblVert = blTriangle.vertices[i]
+
+            iLoop = blTriangle.loops[i]
+
+            iUVs = []
+            for eachLayer in mstsMaterial.uv_layers:
+                bluv = eachLayer.data[iLoop].uv
+                iUV = iUVPointAdd( bluv )
+                iUVs.append(iUV)
+
+            if normalOverride == Normals.Out:
+                # use tree type tangent shading ( normals radiate out from center )
+                normal = mesh.vertices[iblVert].co
+                normal = offsetMatrix.to_3x3() @ normal
+                normal.normalize()
+            elif normalOverride == Normals.Up:
+                normal = ( 0,0,1 )
+            elif normalOverride == Normals.Smooth:
+                # support Auto smooth
+                normal=Vector(blTriangle.split_normals[i])
+                normal = offsetMatrix.to_3x3() @ normal
+                normal.normalize()
+            elif normalOverride == Normals.OutX:
+                # radiate out from below Y axis ( ie LPSTrack100m side vegetation )
+                normal = offsetMatrix.translation
+                normal = Vector( (normal.x-4, 0, normal.z + 12) )
+                normal.normalize()
+            else:
+                # flat shading uses the face normal
+                normal = blTriangle.normal
+                normal = offsetMatrix.to_3x3() @ normal
+                normal.normalize()
+
+            iNormal = iNormalAdd( normal )
+
+            iPoint = iblVert + iPointOffset
+            if iPoint >= len( ExportShape.Points ):
+                raise Exception( 'PROGRAM ERROR:  iPoint out of range' )
+
+            mstsTriangle.append(  iVertexAdd( iPoint, iNormal, iUVs, vertexSet, color1, color2) )
+
+        # Console output, inform new draw call started
+        if len( primitive.Triangles ) == 0:
+            sequence = mstsMaterial.subObject.sequence
+            if len( mstsMaterial.iTextures) > 0:
+                texture = ExportShape.Textures[mstsMaterial.iTextures[0]]
+                filename = ExportShape.Images[texture.iImage]
+            else:
+                filename = ''
+            # DEBUG print( "                           SubObject ",sequence," Draw ", filename, " ", mstsMaterial.blMaterial.msts.Transparency, " ",mstsMaterial.blMaterial.msts.Lighting, " MipBias=",mstsMaterial.blMaterial.msts.MipMapLODBias )
+            print( "                              Draw ", filename, " ", mstsMaterial.blMaterial.msts.Transparency, " ",mstsMaterial.blMaterial.msts.Lighting, " MipBias=",mstsMaterial.blMaterial.msts.MipMapLODBias )
+
+        primitive.Triangles.append( mstsTriangle )
+        # add a face normal ( used by MSTS for culling purposes )
+        normal =  offsetMatrix.to_3x3() @ blTriangle.normal
+        normal.normalize()
+        primitive.iNormals.append( iNormalAdd( normal ) )
+
+
+# build one for each material in the mesh
+class MSTSMaterialDetail:
+
+    def __init__(self ):
+
+        self.flags = '00000400 -1 -1 000001d2 000001c4'
+        self.priority = 0
+        self.uv_layers = []
+        self.normalOverride = Normals.Face
+        self.subObject = None
+        self.iTextures = []
+        self.uvops = []
+        self.zBias = 0.0
+        self.vertexFlags = 0
+        self.vertexLight = LightingOptions[ 'NORMAL' ]
+        self.alphaTestMode = 0
+        self.iShader = 0
+        self.iLightConfig = 0
+        self.iVertexState = 0
+        self.iHierarchy = 0
+        self.iPrimState = 0
+        self.subObject = None
+        self.iPrimitive = 0
+        self.blMaterial = None   # corresponding Blender material
+
+
+def GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, iHierarchy, objectName):
+
+    mstsMaterial = MSTSMaterialDetail()
+
+    mstsMaterial.blMaterial = blMaterial
+
+    mstsMaterial.iHierarchy = iHierarchy
+
+    mstsMaterial.normalOverride = normalOverride
+
+    if blMaterial.msts.Transparency == 'ALPHA':
+        mstsMaterial.flags = '00000400 -1 -1 000001d2 000001c4'
+        mstsMaterial.priority = 1
+    elif blMaterial.msts.Transparency == 'ALPHA_SORT':
+        mstsMaterial.flags = '00000500 0 0 000001d2 000001c4'
+        mstsMaterial.priority = 2
+    if blMaterial.msts.Lighting.startswith( 'SPECULAR'):
+        # clear bit 10
+        # eg  00000500 become 00000100 and 0000400 becomes  00000000
+        d5 = int(mstsMaterial.flags[5],16)
+        d5 &= 0b1011
+        mstsMaterial.flags = mstsMaterial.flags[0:5]+hex(d5)[2]+mstsMaterial.flags[6:]
+
+    subObject = FindSubObject( distanceLevel, mstsMaterial.flags, mstsMaterial.priority, iHierarchy)
+
+    if subObject == None:
+        # create the required subobject
+        subObject = SubObject(distanceLevel)
+        # DEBUG print( "new subobject ", subObject.sequence )
+        subObject.Flags = mstsMaterial.flags
+        subObject.Priority = mstsMaterial.priority
+        subObject.iHierarchy = mstsMaterial.iHierarchy
+        # every vertex_state needs a matching vertex_set
+        for eachVertexState in ExportShape.VertexStates:    # note, unused vertexsets are purged at during write
+            subObject.VertexSets.append( VertexSet() )
+        distanceLevel.SubObjects.append( subObject )
+
+    mstsMaterial.subObject = subObject
+
+    #  this could be improved to look for the uv layer in the node tree
+    #  and in the future handle multiple uvs here
+    if not 'UVMap' in mesh.uv_layers:
+        raise MyException( "Missing UVMap in: " + objectName)
+    mstsMaterial.uv_layers = [ mesh.uv_layers['UVMap']] #but what about beziers generate map 'Orco'
+
+
+    # find image used by material
+    imageName = BaseColorImageFrom( blMaterial ) # may return None
+    mipMapLODBias = blMaterial.msts.MipMapLODBias
+    mstsMaterial.iTextures.append( iTextureAdd( imageName, mipMapLODBias ) )
+    textureAddressMode = 1 # repeat
+    # textureAddressMode = 3   # extend edges
+    # textureAddressMode = 4   # clamp with border
+    # textureAddressMode = 2   # mirror
+    mstsMaterial.uvops.append( ( UVOpCopy, textureAddressMode ) )
+
+    # now configure options based on the material settings
+    mstsMaterial.zBias = 0.0
+
+    # Set Up Vertex Lighting
+    mstsMaterial.vertexFlags = 0
+    mstsMaterial.vertexLight = LightingOptions[ blMaterial.msts.Lighting ]
+
+    if blMaterial.msts.Transparency == 'CLIP':
+        mstsMaterial.alphaTestMode = 1
+    else:
+        mstsMaterial.alphaTestMode = 0
+
+    if blMaterial.msts.Lighting == "EMISSIVE":
+        if blMaterial.msts.Transparency == 'OPAQUE':
+            mstsMaterial.iShader = iShaderAdd( 'Tex' )
+        else:
+            mstsMaterial.iShader = iShaderAdd( 'BlendATex' )
+    else:
+        if blMaterial.msts.Transparency == 'OPAQUE':
+            mstsMaterial.iShader = iShaderAdd( 'TexDiff' )
+        else:
+            mstsMaterial.iShader = iShaderAdd( 'BlendATexDiff' )
+
+
+    mstsMaterial.iLightConfig = iLightConfigAdd( mstsMaterial.uvops )
+    mstsMaterial.iVertexState = iVertexStateAdd( mstsMaterial.vertexFlags, iHierarchy, mstsMaterial.vertexLight, mstsMaterial.iLightConfig )
+
+    mstsMaterial.iPrimState = iPrimStateAdd( mstsMaterial.iVertexState, mstsMaterial.zBias, mstsMaterial.iShader, mstsMaterial.alphaTestMode, mstsMaterial.iLightConfig, mstsMaterial.iTextures )
+    mstsMaterial.iPrimitive = iPrimitiveAdd( subObject, mstsMaterial.iPrimState )
+
+
+    return mstsMaterial
+
+
+
+#####################################
+# add this mesh,
+# create any needed subObjects
+# create a prim_state referencing iHierarchy
+# translate the mesh points by relativeMatrix
+# apply the normalOverrides
+# transfer all vertex points to msts points
+# generate triangle lists
+def AddMesh( distanceLevel, mesh, iHierarchy, offsetMatrix, normalsProperty, objectName ):
+
+    print( '              triangles = ', len( mesh.loop_triangles ) )
+
+    # determine normal override from the object Properties
+    normalOverride = Normals.Face
+    if normalsProperty == 'UP':
+        normalOverride = Normals.Up
+    elif normalsProperty == 'OUT':
+        normalOverride = Normals.Out
+    elif normalsProperty == 'FILLET':
+        normalOverride = Normals.Fillet
+    elif normalsProperty == "OUTX":
+        normalOverride = Normals.OutX
+    # evaluate any special handling for normals
+    #   Note: these may be overriden 'per face' in AddFaceToSubObject
+    if normalOverride == Normals.Fillet:
+        # preprocess normals for filleted appearance
+        # verts in a flat face will use the face normal
+        # verts in a smoothed face use the normal of the adjacent flat face
+        for tri in mesh.loop_triangles:
+            if not tri.use_smooth:
+                for iVert in tri.vertices:
+                  mesh.vertices[iVert].normal = tri.normal
+        # now handle them like standard smoothed normals
+        normalOverride = Normals.Face
+
+    # for every vertex in the blender mesh, add a corresponding msts point
+    iPointOffset = AddMeshVertexPoints( mesh, offsetMatrix )
+
+    ExtendBoundsForMesh( mesh, offsetMatrix @ hierarchyObjects[iHierarchy][0].matrix_world )
+
+    # create msts materials for each mesh material
+    mstsMaterials = []
+    for blMaterial in mesh.materials:
+        if blMaterial != None:
+            mstsMaterials.append( GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, iHierarchy, objectName ) )
+        else:
+            raise MyException( "Empty Material on object: " + objectName )
+
+    #if scale is negative, invert winding order of triangles
+    scale = offsetMatrix.to_scale()
+    sign = scale.x * scale.y * scale.z
+    if sign < 0:
+       windingOrder = ( (0,1,2),  ) #inverted
+    else:
+       windingOrder = ( (0,2,1),  ) #forward
+
+
+    # for speedup, resolve unique points only per mesh
+    global UniqueUVPoints
+    global UniqueNormals
+    UniqueUVPoints.keys.clear()
+    UniqueNormals.keys.clear()
+
+    for iTriangle in range( 0, len( mesh.loop_triangles ) ):
+
+        if iTriangle % 10 == 0:   # reduce the update rate
+            UpdateProgress()
+
+        blTriangle = mesh.loop_triangles[iTriangle]
+
+        if blTriangle.material_index < len( mstsMaterials ):
+            mstsMaterial = mstsMaterials[ blTriangle.material_index ]
+        else:
+            raise MyException( "Missing Materials on object: " + objectName )
+
+        # check if the subobject is full
+        subObject = mstsMaterial.subObject
+        vertexCount = 0
+        for eachVertexSet in subObject.VertexSets:
+            vertexCount += len( eachVertexSet.Vertices )
+
+        if vertexCount + 3 > MaxVerticesPerSubObject:
+            # subObject is full so start a new one
+            subObject = SplitSubObject( subObject)
+            mstsMaterial.iPrimitive = iPrimitiveAdd( subObject, mstsMaterial.iPrimState )
+            mstsMaterial.subObject = subObject
+
+        # check if the primitive is full
+        iPrimitive = mstsMaterial.iPrimitive
+        primitive = subObject.Primitives[iPrimitive]
+
+        if len(primitive.Triangles) * 3 + 3 > MaxVerticesPerPrimitive:
+            # primitive is full so start a new one
+            iPrimitive = iPrimitiveAppend( subObject, mstsMaterial.iPrimState )
+            primitive = subObject.Primitives[iPrimitive]
+            mstsMaterial.iPrimitive = iPrimitive
+
+
+        AddTriangleToSubObject( mesh, mstsMaterial, blTriangle, windingOrder, offsetMatrix, iPointOffset )
+
+
+#####################################
+# add this collection and any child collections
+def AddCollections( distanceLevel, collection, iHierarchy, relativeMatrix ):
+
+    for eachObject in collection.objects:
+        AddObject( distanceLevel, eachObject, iHierarchy, relativeMatrix @ eachObject.matrix_world )
+
+    for eachChild in collection.children:
+        AddCollections( distanceLevel, eachChild, iHierarchy, relativeMatrix )
+
+
+#####################################
+# add this object,
+# transform its vertices by relativeMatrix
+# link it to iHierarchy
+def AddObject( distanceLevel, object, iHierarchy, relativeMatrix ):
+
+        print( '    ',object.name )
+
+
+        if object.is_instancer and object.instance_collection != None:
+
+            # its a group instance, process each of its subobjects
+            collection = object.instance_collection
+            AddCollections( distanceLevel, collection, iHierarchy, relativeMatrix )
+
+        # make sure its not a camera, light etc that do not have geometry
+        elif HasGeometry( object ):
+
+            # TODO handle particles
+            # TODO handle dupliverts
+
+            # determine normal override from the object Properties
+            normalsProperty = object.data.get( 'NORMALS', '' )
+
+            # Apply Modifiers as PREVIEW
+            #depsgraph = bpy.context.evaluated_depsgraph_get()
+            #ob_to_convert = object.evaluated_get(depsgraph)
+            #Update here for Blender 4.1
+            #mesh = ob_to_convert.to_mesh()
+            
+            mesh = get_evaluated_mesh(object)
+
+            if BlenderVersion < (4,1,0):    # cope with loss of this feature in Blender 4.1 +
+                mesh.calc_normals_split()
+            
+            mesh.calc_loop_triangles()
+
+            AddMesh( distanceLevel, mesh, iHierarchy, relativeMatrix, normalsProperty, object.name )
+
+
+
+
+#####################################
+# eg MAIN_1000
+# return ( 'MAIN',1000 )
+def LodDistanceFromName( collectionName ):
+
+    split = collectionName.rsplit( '_',1 )
+    if len( split ) == 2:
+        if split[0] != '':
+            suffix = split[1]
+            if suffix.isnumeric( ):
+                distance = int( suffix )
+                return distance
+
+    return None
+
+
+
+#####################################
+# Add the specified   distanceLevel to the first LodControl
+# Scan the hierarchy for objects that are in this collection and add them
+# if it turns out to be empty, trim it out
+def AppendDistanceLevel( lodCollection ):
+
+    global ExportShape
+    global hierarchy
+    global hierarchyObjects
+
+    distanceLimit = LodDistanceFromName( lodCollection.name )
+
+    print( "DLEVEL "+str(distanceLimit) )
+    # add the distance level
+    lodControl = ExportShape.LodControls[0]
+    distanceLevel = DistanceLevel( lodControl )
+    distanceLevel.Selection = distanceLimit
+    distanceLevel.Hierarchy = hierarchy
+    lodControl.DistanceLevels.append( distanceLevel )
+
+    for iHierarchy in range( 0, len( hierarchy ) ):
+        for object in hierarchyObjects[iHierarchy]:
+            if object in lodCollection.all_objects.values():
+                nodeObject = hierarchyObjects[iHierarchy][0]
+                relativeMatrix =  ConstructMatrix( nodeObject, object )
+                AddObject( distanceLevel, object, iHierarchy, relativeMatrix )
+
+
+    distanceLevel.SubObjects.sort( key=lambda subObject: subObject.Priority )
+
+    if len( distanceLevel.SubObjects) == 0 or len( distanceLevel.SubObjects[0].Primitives ) == 0:
+        print( 'WARNING - empty distance level ',distanceLevel.Selection )
+        del lodControl.DistanceLevels[ len( lodControl.DistanceLevels )-1 ]
+
+
+
+#####################################
+# return a vector representing the geometric center of all the geometry
+def FindCenter(  ):
+    center = ( UpperBound + LowerBound ) / 2.0
+    return center
+
+
+#####################################
+# from the bounds about the specified center
+def FindBoundingRadius( center ):
+
+    v = UpperBound - center
+    BoundingRadiusSquared = v.x*v.x+v.y*v.y+v.z*v.z
+    v = LowerBound - center
+    dSquared = v.x*v.x+v.y*v.y+v.z*v.z
+    if dSquared>BoundingRadiusSquared:
+        BoundingRadiusSquared = dSquared
+    return sqrt( BoundingRadiusSquared )
+
+#####################################
+def CompactPoints():
+    global ExportShape
+
+    oldPoints = ExportShape.Points
+    ExportShape.Points = []
+    uniquePoints = UniqueArray( ExportShape.Points,3,0.0001 )
+    conversion = []
+
+    for eachPoint in oldPoints:
+       conversion.append( uniquePoints.IndexOf( eachPoint ) )
+
+    for eachLODControl in ExportShape.LodControls:
+        for eachDistanceLevel in eachLODControl.DistanceLevels:
+            for eachSubObject in eachDistanceLevel.SubObjects:
+                for eachVertexSet in eachSubObject.VertexSets:
+                    for eachVertex in eachVertexSet.Vertices:
+                        eachVertex.iPoint = conversion[eachVertex.iPoint]
+
+#####################################
+# remove empty primitives
+def CompactPrimitives( ):
+
+    emptyCount = 0
+    for eachLODControl in ExportShape.LodControls:
+        for eachDistanceLevel in eachLODControl.DistanceLevels:
+            for eachSubObject in eachDistanceLevel.SubObjects:
+                OKPrimitives = []
+                for eachPrimitive in eachSubObject.Primitives:
+                    if len( eachPrimitive.Triangles ) > 0:
+                        OKPrimitives.append( eachPrimitive )
+                    else:
+                        emptyCount += 1
+                eachSubObject.Primitives = OKPrimitives
+
+    # DEBUG print ( "Compacting ",emptyCount," Empty Primitives" )
+
+#####################################
+# remove empty subobjects
+def CompactSubObjects( ):
+
+    emptyCount = 0
+    for eachLODControl in ExportShape.LodControls:
+        for eachDistanceLevel in eachLODControl.DistanceLevels:
+                OKSubObjects = []
+                for eachSubObject in eachDistanceLevel.SubObjects:
+                    if len( eachSubObject.Primitives ) > 0:
+                        OKSubObjects.append( eachSubObject )
+                    else:
+                        emptyCount += 1
+                eachDistanceLevel.SubObjects = OKSubObjects
+
+    # DEBUG print ( "Compacting ",emptyCount," Empty SubObjects" )
+
+
+#####################################
+def CreateEulerRotationController( iFC, fcurves ):
+
+    rotationController = RotationController()
+
+    #TODO this assumes all points are lined up at the same time
+    for iKey in range(0,len(fcurves[iFC].keyframe_points)):
+        key = RotationKey()
+        key.Frame = fcurves[iFC].keyframe_points[iKey].co[0]
+        x = fcurves[iFC+0].keyframe_points[iKey].co[1]
+        y = fcurves[iFC+1].keyframe_points[iKey].co[1]  #Note coordinate conversion
+        z = fcurves[iFC+2].keyframe_points[iKey].co[1]
+
+        euler = mathutils.Euler( ( x,y,z ), 'XYZ' )
+        quat = euler.to_quaternion()
+
+        key.W = quat.w
+        key.X = quat.x
+        key.Y = quat.z
+        key.Z = quat.y
+        rotationController.Keys.append( key )
+
+    return rotationController
+
+
+#####################################
+def CreateRotationController( iFC, fcurves ):
+
+    rotationController = RotationController()
+
+    #TODO this assumes all points are lined up at the same time
+    for iKey in range(0,len(fcurves[iFC].keyframe_points)):
+        key = RotationKey()
+        key.Frame = fcurves[iFC].keyframe_points[iKey].co[0]
+        key.W = fcurves[iFC].keyframe_points[iKey].co[1]
+        key.X = fcurves[iFC+1].keyframe_points[iKey].co[1]
+        key.Y = fcurves[iFC+3].keyframe_points[iKey].co[1]  #Note coordinate conversion
+        key.Z = fcurves[iFC+2].keyframe_points[iKey].co[1]
+        rotationController.Keys.append( key )
+
+    return rotationController
+
+#####################################
+def CreateLinearController( iFC, fcurves ):
+
+    linearController = PositionController()
+
+    #TODO this assumes all points are lined up on the same frame
+    for iKey in range( 0, len(fcurves[iFC].keyframe_points) ):
+        key = LinearKey()
+        key.Frame = fcurves[iFC].keyframe_points[iKey].co[0]
+        key.X = fcurves[iFC].keyframe_points[iKey].co[1]
+        key.Y = fcurves[iFC+2].keyframe_points[iKey].co[1]  #Note coordinate conversion
+        key.Z = fcurves[iFC+1].keyframe_points[iKey].co[1]
+        linearController.Keys.append( key )
+
+    return linearController
+
+#####################################
+def CreateAnimationNode( nodeObject ):
+
+    animationNode = AnimationNode()
+    animationNode.Label = nodeObject.name
+    if nodeObject.animation_data != None:
+        if nodeObject.animation_data.action != None:
+            fcurves = nodeObject.animation_data.action.fcurves
+            iFC = 0
+            while iFC < len( fcurves ):
+                if fcurves[iFC].data_path == 'rotation_quaternion':
+                    animationNode.Controllers.append( CreateRotationController( iFC, fcurves ) )
+                    iFC += 4
+                elif fcurves[iFC].data_path == 'rotation_euler':
+                    animationNode.Controllers.append( CreateEulerRotationController( iFC, fcurves ) )
+                    iFC += 3
+                elif fcurves[iFC].data_path == 'location':
+                    animationNode.Controllers.append( CreateLinearController( iFC, fcurves ) )
+                    iFC += 3
+                else:
+                    print( 'Unknown controller type ',fcurves[iFC].data_path,' in ',nodeObject.name )
+                    iFC += 1
+
+
+    return animationNode
+
+#####################################
+
+class SceneCenterObject:    # a proxy to represent a node object at the center of the scene
+
+    is_instancer = False
+    type = 'PROXY'  # made up for this application, not one of Blender's recognized types
+    animation_data = None
+    matrix_world = Matrix()
+
+    def __init__(self  ):
+        self.children = []
+        self.name = "MAIN"
+
+    def get( self, parameter, default):
+        return default
+
+#####################################
+def ExportShapeFile( collectionName, MSTSFilePath ):
+
+    global ExportShape
+    ExportShape = Shape()
+
+    global UniqueUVPoints
+    global UniqueNormals
+    global UniqueColors
+    global UniqueLightMaterials
+    UniqueUVPoints = UniqueArray( ExportShape.UVPoints, 3, 0.0001 )
+    UniqueNormals = UniqueArray( ExportShape.Normals, 2, 0.001 )
+    UniqueColors = UniqueArray( ExportShape.Colors, 3, 0.0001 )
+    UniqueLightMaterials = UniqueArray( ExportShape.LightMaterials, 1,1 )
+
+    global UpperBound
+    global LowerBound
+    UpperBound = mathutils.Vector( ( -100000,-100000,-100000 ))
+    LowerBound = mathutils.Vector( ( 100000, 100000, 100000 ) )
+
+    global hierarchy        # linked list ie [-1,    0,1,1,0 ]
+    global hierarchyObjects  # a list of objects for each level of the hierarchy, first element in list is the retained node [ MAIN, BOGIE1, WHEELS11, WHEELS12 .. ]
+    hierarchy = []
+    hierarchyObjects = []
+
+    global LastSubObject
+    global LastMaterial
+    global LastiMatrix
+    global LastiPrimState
+    LastSubObject = None
+    LastMaterial = None
+    LastiMatrix = -1
+    LastiPrimState = 0
+
+    # For now, support a single LOD control
+    lodControl = LodControl( ExportShape )
+    ExportShape.LodControls.append( lodControl )
+
+    mainCollection = bpy.context.scene.collection.children[collectionName]
+
+    # get a sorted list of valid LOD Collections in MAIN
+    lodNames = []
+    for eachChild in mainCollection.children:
+        childName = eachChild.name
+        if childName.startswith( 'MAIN_' ):
+            if LodDistanceFromName( childName ) != None:
+                lodNames.append( childName )
+    
+    # the natsort lambda splits the input string "s" into groups of non-digits and digits using a regex
+    # and enables sorting the "lodNames" list correctly even without leading zeros in the lod distance.
+    # it is equivalent to using "lodNames.sort(key=int)" for groups of digits in a string and lodNames.sort()
+    # for the remaining non-numerical characters. but all of it happens in a single call to ".sort()".
+    # it is case-insensitive for the remaining non-numerical characters due to the ".tolower()" call.
+    #
+    # examples:
+    # ['MAIN_1200', 'MAIN_400', 'MAIN_150'] would be sorted into ['MAIN_150', 'MAIN_400', 'MAIN_1200']
+    # ['MAIN_1200', 'MAIN_0400', 'MAIN_0150'] would be sorted into ['MAIN_0150', 'MAIN_0400', 'MAIN_1200']
+    # ['main_1200', 'MAIN_0400randomstuff', 'mAiN_150'] would be sorted into ['mAiN_150', 'MAIN_0400randomstuff', 'main_1200']
+    natsort = lambda s: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)]
+    lodNames.sort(key=natsort)
+
+    global LodCollections
+    LodCollections = []
+    for eachName in lodNames:
+        LodCollections.append( mainCollection.children[eachName] )
+
+    if len( LodCollections ) == 0:
+        raise MyException( "No LOD collections in MAIN, eg MAIN_2000" )
+
+
+    # add root objects to scene center
+    rootObject = SceneCenterObject( )  # make everything relative to the scene center
+    for eachObject in bpy.context.scene.objects:
+        if eachObject.parent == None:
+            rootObject.children.append( eachObject)
+
+    BuildHierarchyFrom( rootObject, -1 )  # create global hierarchy array
+
+    CreateMSTSMatrices( )
+
+    # create a distance level for each one specified in MAIN
+    for eachLodCollection in LodCollections:
+        AppendDistanceLevel( eachLodCollection )
+
+    # export animations
+    if len( bpy.data.actions ) > 0:
+        animation = Animation()
+        ExportShape.Animations.append(animation)
+        animation.FrameCount = bpy.context.scene.frame_end
+        animation.FrameRate = 30
+        for eachNode in hierarchyObjects:
+            animation.AnimationNodes.append( CreateAnimationNode( eachNode[0] ) )
+
+    # set up the volume sphere
+    volumeSphere = VolumeSphere()
+    # center = FindCenter( rootObject )  OR doesn't display properly with a computed center,
+    center = rootObject.matrix_world.translation
+    radius = FindBoundingRadius( center )
+    MSTSvector = ( center.x, center.z, center.y )
+    volumeSphere.Vector = MSTSvector
+    volumeSphere.Radius = radius * 1.1  # add some safety margin
+    ExportShape.Volumes.append( volumeSphere )
+
+    print()
+    print ( "Compacting ",len( ExportShape.Points )," Points ", end='' )
+    CompactPoints()
+    print ( " To ",len( ExportShape.Points ) )
+    CompactPrimitives()
+    CompactSubObjects()
+
+    ExportShape.Write( MSTSFilePath )
+
+    # Reporting
+    print ( )
+    for lodControl in ExportShape.LodControls:
+        for distanceLevel in lodControl.DistanceLevels:
+            triangleCount = 0
+            primitiveCount = 0
+            for eachSubObject in distanceLevel.SubObjects:
+                for primitive in eachSubObject.Primitives:
+                    if len( primitive.Triangles ) > 0:
+                        primitiveCount += 1
+                        triangleCount += len(primitive.Triangles)
+            print ( "LOD: ",distanceLevel.Selection )
+            print ( "     Triangles  = ", triangleCount )
+            print ( "     Draw Calls = ", primitiveCount )
+    print ( "IMAGES:" )
+    for eachImage in ExportShape.Images:
+        print( "   ",eachImage )
+    print()
+    return
+
+
+'''  LIBRARY FUNCTIONS
+All code below uses the MSTS coordinate system.
+
+Structure matches the MSTS .s file with the following
+top level name substitutions:
+
+VolumeSphere
+Matrix
+VertexState
+Texture
+PrimState
+Vertex
+Primitive
+VertexSet
+SubObject
+DistanceLevel
+LodControl
+RotationKey
+TCBRotationKey
+LinearKey
+PositionController
+RotationController
+AnimationNode
+Animation
+
+This structure matches the MSTS .s file with the following exceptions
+
+Add vertices to vertex_sets, not subobject.vertices as in MSTS.
+It not needed to populate the sub_object_header data.
+
+    Both of the above are generated from the underlying data on write.
+
+'''
+
+import codecs
+import bpy
+
+import math
+from math import *
+
+
+
+####################################
+class STFWriter:
+####################################
+#
+# Writes an MSTS structured unicode text file
+#
+
+
+        def __init__( self, filename):
+                self.f = codecs.open(filename, 'w', encoding='utf-16')
+
+        def WriteLine( self, string ):
+                self.f.write( string )
+                self.f.write( '\r\n' )
+
+        def Write( self, string ):
+                self.f.write( string )
+
+        def Close(self ):
+                self.f.close()
+
+
+
+
+########################################
+class VolumeSphere:
+
+        def __init__( self ):
+            self.Vector = ( 0.0,0.0,0.0 )
+            self.Radius = 100.0
+
+        def Write( self, stf ):
+            stf.WriteLine( '        vol_sphere (' )
+            stf.WriteLine( '            vector ( {0} {1} {2} ) {3}'.format( self.Vector[0],self.Vector[1],self.Vector[2],self.Radius))
+            stf.WriteLine( '        )' )
+
+
+
+########################################
+class MSTSMatrix:
+
+        def __init__( self ):
+            self.Label = 'MAIN'
+            self.M11 = 1.0
+            self.M12 = 0.0
+            self.M13 = 0.0
+            self.M21 = 0.0
+            self.M22 = 1.0
+            self.M23 = 0.0
+            self.M31 = 0.0
+            self.M32 = 0.0
+            self.M33 = 1.0
+            self.M41 = 0.0
+            self.M42 = 0.0
+            self.M43 = 0.0
+
+
+        def Write( self, stf ):
+            stf.WriteLine( '        matrix {0} ( {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} )'.format( self.Label,self.M11,self.M12,self.M13,self.M21,self.M22,self.M23,self.M31,self.M32,self.M33,self.M41,self.M42,self.M43 ))
+
+
+########################################
+class VertexState:
+
+    def __init__( self ):
+        self.Flags = 0
+        self.iMatrix = 0
+        self.iLightMaterial = -5
+        self.iLightConfig = 0
+
+    def Write( self, stf ):
+        stf.WriteLine( '        vtx_state ( {0:08X} {1} {2} {3} 00000002 )'.format( self.Flags, self.iMatrix, self.iLightMaterial, self.iLightConfig ))
+
+
+
+########################################
+class Texture:
+
+    def __init__(self):
+        self.iImage = 0
+        self.iFilter = 0
+        self.MipMapLODBias = 0 # often -3 in MSTS
+
+
+    def Write( self, stf ):
+        stf.WriteLine( '        texture ( {0} {1} {2} ff000000 )'.format( self.iImage,self.iFilter,self.MipMapLODBias))
+
+########################################
+class UVOpCopy:   # uv_op_copy
+
+    def __init__( self ):
+        self.TextureAddressMode = 0     #TexAddrMode
+        self.SourceUVIndex = 0          #SrcUVIdx
+
+    def Write( self, stf ):
+        stf.WriteLine( '                uv_op_copy ( {0} {1} )'\
+                .format( self.TextureAddressMode, self.SourceUVIndex ) )
+
+########################################
+class UVOpReflectMapFull:   #uv_op_reflectmap        ==> :uint,TexAddrMode .
+
+    def __init__( self ):
+        self.TextureAddressMode = 0     #TexAddrMode
+
+    def Write( self, stf ):
+        stf.WriteLine( '                uv_op_reflectmapfull ( {0} )'\
+                .format( self.TextureAddressMode ) )
+
+########################################
+class LightConfig:       #light_model_cfg         ==> :dword,flags :uv_ops .
+
+    def __init__( self ):
+        self.UVOps = []
+
+    def Write( self, stf ):
+        stf.WriteLine( '		light_model_cfg ( 00000000' )
+        count = len( self.UVOps )
+        stf.WriteLine( '			uv_ops ( {0}'.format( count ) )
+        for i in range( 0, count ):
+            self.UVOps[i].Write( stf )
+        stf.WriteLine( '			)' )
+        stf.WriteLine( '		)' )
+
+
+########################################
+class PrimState:
+
+                    # eg        prim_state (    00000000 0
+                    #                                        tex_idxs ( 1 0 ) 0 0 0 0 1
+                    #                                   )
+
+    def __init__( self ):
+        self.Label = ''
+        self.iShader = 0
+        self.iTextures = []
+        self.ZBias = 0.0
+        self.iVertexState = 0
+        self.AlphaTestMode = 1
+        self.iLightConfig = 0
+        self.ZBufMode = 1
+
+
+    def Write( self,stf ):
+        stf.WriteLine( '        prim_state {0} ( 00000000 {1}'.format( self.Label,self.iShader) )
+        stf.Write( '            tex_idxs ( {0}'.format(len(self.iTextures)) )
+        for eachiTexture in self.iTextures:
+            stf.Write( ' {0}'.format( eachiTexture ) )
+        stf.WriteLine(' ) {0} {1} {2} {3} {4}'.format( self.ZBias,self.iVertexState, self.AlphaTestMode, self.iLightConfig, self.ZBufMode ) )
+        stf.WriteLine( '        )' )
+
+
+
+########################################
+class Vertex:
+
+        # eg vertex ( 00000000 0 0 ffffffff ff000000
+        #        vertex_uvs ( 1 0 )
+        #               )
+
+        def __init__( self ):
+                self.iPoint = 0
+                self.iNormal = 0
+                self.iUVs = []  #TODO multiple UV's
+                self.Color1 = 0xffffffff
+                self.Color2 = 0xff000000
+
+
+        def Write( self, stf ):
+                stf.WriteLine( '                                vertex ( 00000000 {0} {1} {2:08X} {3:08X}'.format(self.iPoint,self.iNormal,self.Color1, self.Color2 ) )
+                stf.Write( '                                    vertex_uvs ( {0}'.format( len(self.iUVs) ) )
+                for eachiUV in self.iUVs:
+                    stf.Write( ' {0}'.format(eachiUV))
+                stf.WriteLine( ' )' )
+                stf.WriteLine( '                                )')
+
+
+
+########################################
+
+class Primitive:
+
+        def __init__( self ):
+                self.iPrimState = 0
+                self.Triangles = []
+                self.iNormals = []
+
+
+        def Write( self, stf, indexOffset ):
+                stf.WriteLine( '                                indexed_trilist (' )
+
+                stf.Write( '                                    vertex_idxs ( {0} '.format( len(self.Triangles) * 3) )
+                linecount = 0
+                for eachTriangle in self.Triangles:
+                        for eachIndex in eachTriangle:
+                                stf.Write( '{0} '.format( eachIndex + indexOffset ) )
+                                linecount += 1
+                                if linecount > 100:
+                                        linecount = 0
+                                        stf.WriteLine( '' )
+                                        stf.Write( '                                    ')
+                stf.WriteLine( ')') #vertex_idxs
+
+                stf.Write( '                                    normal_idxs ( {0} '.format( len(self.Triangles)) )
+                linecount = 0
+                for i in self.iNormals:
+                            stf.Write( '{0} 3 '.format( i ) )
+                            linecount += 1
+                            if linecount > 100:
+                                    linecount = 0
+                                    stf.WriteLine( '' )
+                                    stf.Write( '                                    ')
+                stf.WriteLine( ')') #normal_idxs
+
+                stf.Write( '                                    flags ( {0} '.format( len(self.Triangles)) )
+                linecount = 0
+                for i in self.iNormals:
+                            stf.Write( '00000000 ' )
+                            linecount += 1
+                            if linecount > 100:
+                                    linecount = 0
+                                    stf.WriteLine( '' )
+                                    stf.Write( '                                    ')
+                stf.WriteLine( ')') #flags
+
+                stf.WriteLine( '                                )') #indexed_trilist
+
+
+########################################
+class GeometryInfoPerMatrix:
+
+        def __init__( self, ShapeVertexStatesCount ):
+            self.PrimitivesCount = 0
+            self.TrianglesCount = 0
+            self.VerticesCount = 0
+            self.VertexStatesCount = 0
+            self.VertexStatesUsed = []
+            for i in range(0,ShapeVertexStatesCount):
+                self.VertexStatesUsed.append( False )
+
+
+########################################
+class VertexSet:
+
+        def __init__( self ):
+                self.Vertices = []
+                self.iStart = 0     # first vertex used by this set
+                self.index = {}     # not exported, keyed on iPoint, list of iVertex referencing that point
+
+
+########################################
+class SubObject:
+
+
+        def __init__( self, parent ):
+                self.VertexSets = []
+                self.Primitives = []
+                self.DistanceLevel = parent
+                self.Flags = '00000400 -1 -1 000001d2 000001c4'
+                self.Priority = 0       # sub_objects are sorted by this number, 0 comes first
+                self.iHierarchy = 0     # not exported, see HierarchyOptimization
+                self.sequence = len( self.DistanceLevel.SubObjects )  # not exported, for debugging
+
+
+        def Write( self, stf ):
+                stf.WriteLine( '                        sub_object (' )
+                self.WriteSubObjectHeader( stf )
+                self.WriteVertices( stf )
+                self.WriteVertexSets( stf )
+                self.WritePrimitives( stf )
+                stf.WriteLine( '                        )') #sub_object
+                return
+
+
+        def WriteSubObjectHeader( self, stf ):
+                stf.WriteLine( '                            sub_object_header ( ' + self.Flags )
+                self.WriteSubObjectGeometryInfo( stf )
+                self.WriteSubObjectShaders( stf )
+                self.WriteSubObjectLightConfigs( stf )
+                self.WriteSubObjectID( stf )
+                stf.WriteLine( '                            )')
+
+
+        def WriteSubObjectGeometryInfo( self, stf ):
+                shape = self.DistanceLevel.LodControl.Shape
+                # Set up data collection array and initialize
+                matrixInfo = []
+                for i in range(0,len(shape.Matrices) ):
+                        matrixInfo.append( GeometryInfoPerMatrix( len(shape.VertexStates) ))
+                #Scan all geometry and accumulate the statistics per matrix
+                for primitive in self.Primitives:
+                        primState = shape.PrimStates[primitive.iPrimState]
+                        vertexState = shape.VertexStates[primState.iVertexState]
+                        iMatrix = vertexState.iMatrix
+                        matrixInfo[iMatrix].PrimitivesCount += 1
+                        matrixInfo[iMatrix].TrianglesCount += len(primitive.Triangles)
+                        matrixInfo[iMatrix].VerticesCount += len(primitive.Triangles) * 3
+                        matrixInfo[iMatrix].VertexStatesUsed[primState.iVertexState] = True
+                # Calculate VertexStates (txLightCmds) per matrix
+                for i in range( 0, len(matrixInfo) ):
+                        matrixInfo[i].VertexStatesCount = 0
+                        for b in matrixInfo[i].VertexStatesUsed:
+                                if b : matrixInfo[i].VertexStatesCount += 1
+                # Now update the summary data
+                # Calculate FaceNormals
+                faceNormalsCount = 0
+                for primitive in self.Primitives:
+                        faceNormalsCount += len(primitive.Triangles)
+                # Calculate number of vtx_states used by primitives in this sub_objects
+                vertexStatesCount = 0
+                for eachVertexSet in self.VertexSets:
+                    if len(eachVertexSet.Vertices)>0:
+                        vertexStatesCount += 1
+                # Calculate number of vertices (VertIdxs) in all the vertex_idxs statements ( 3 x FaceNormals )
+                verticesCount = faceNormalsCount * 3
+                # Calculate Trilists - number of indexed_trilist statements ( in all the files I've seen, all primitives are trilists )
+                trilistsCount = len(self.Primitives)
+                # UNKNOWN use - NodeTxLightCmds, LineListIdxs, NodeXTrilistIdxs, LineLists, PtLists , NodeXTrilists - always seems to be 0
+                stf.WriteLine( '                                geometry_info ( {0} {1} 0 {2} 0 0 {3} 0 0 0'.format(faceNormalsCount,vertexStatesCount,verticesCount,trilistsCount))
+                # Write geometry nodes
+                # Create a new empty geometry node map and geometry nodes array
+                geometryNodeMap = []
+                geometryNodeCount = 0
+                for i in range( 0, len( shape.Matrices) ):
+                        geometryNodeMap.append(-1)  # initialize to -1's
+                        if matrixInfo[i].PrimitivesCount > 0:
+                                geometryNodeCount += 1
+                # Populate the new  geometry_node_map and write out the geometry_nodes
+                stf.WriteLine( '                                    geometry_nodes ( {0}'.format(geometryNodeCount))
+                iGeometryNode = 0
+                for iMatrix in range( 0, len(shape.Matrices)):
+                        matrix_info = matrixInfo[iMatrix]
+                        if matrix_info.PrimitivesCount > 0:
+                                stf.WriteLine( '                                        geometry_node ( {0} 0 0 0 0'.format(matrix_info.VertexStatesCount))
+                                stf.WriteLine( '                                            cullable_prims ( {0} {1} {2} )'.format(matrix_info.PrimitivesCount,matrix_info.TrianglesCount,matrix_info.VerticesCount))
+                                stf.WriteLine( '                                        )')
+                                geometryNodeMap[iMatrix] = iGeometryNode
+                                iGeometryNode += 1
+                stf.WriteLine( '                                    )')
+                # Write geometry node map
+                stf.Write( '                                    geometry_node_map ( {0} '.format(len(shape.Matrices)))
+                for iGeometryNode in geometryNodeMap:
+                        stf.Write( '{0} '.format( iGeometryNode) )
+                stf.WriteLine( ')' ) #geometry_node_map
+                stf.WriteLine( '                                )') #geometry_info
+                return
+
+        def WriteSubObjectShaders( self, stf ):
+                shape = self.DistanceLevel.LodControl.Shape
+                subObjectShaders = set()
+                for eachPrimitive in self.Primitives:
+                        primState = shape.PrimStates[eachPrimitive.iPrimState]
+                        subObjectShaders |= set([primState.iShader])
+                stf.Write( '                                subobject_shaders ( {0} '.format(len(subObjectShaders) ) )
+                for iShader in subObjectShaders:
+                        stf.Write( '{0} '.format( iShader ) )
+                stf.WriteLine( ')' )
+
+        def WriteSubObjectLightConfigs( self, stf ):
+                shape = self.DistanceLevel.LodControl.Shape
+                subObjectLightConfigs = set()
+                for primitive in self.Primitives:
+                        primState = shape.PrimStates[primitive.iPrimState]
+                        subObjectLightConfigs |= set([primState.iLightConfig])
+                stf.Write( '                                subobject_light_cfgs ( {0} '.format(len(subObjectLightConfigs) ) )
+                for iLightConfig in subObjectLightConfigs:
+                        stf.Write( '{0} '.format( iLightConfig ) )
+                stf.Write( ')' )
+
+        def WriteSubObjectID( self, stf ):
+                stf.WriteLine( ' 0' )  # [:uint,SubObjID]
+
+        def WriteVertices( self, stf ):  # and set start location for vertex_set's
+                # count the vertices
+                count = 0
+                for vertexSet in self.VertexSets:
+                        count += len( vertexSet.Vertices )
+                stf.WriteLine( '                            vertices ( {0}'.format(count))
+                # write out the vertices
+                iStart = 0
+                for vertexSet in self.VertexSets:
+                    vertexSet.iStart = iStart
+                    for vertex in vertexSet.Vertices:
+                        vertex.Write( stf )
+                    iStart += len( vertexSet.Vertices )
+                stf.WriteLine( '                            )') # vertices
+
+
+        def WriteVertexSets( self, stf ):
+                # count the vertex sets
+                count = 0
+                for vertexSet in self.VertexSets:
+                        if len( vertexSet.Vertices ) > 0:
+                                count += 1
+                stf.WriteLine( '                            vertex_sets ( {0}'.format(count) )
+
+                # write out the vertex sets
+                for i in range( 0, len( self.VertexSets ) ):
+                        vertexSet = self.VertexSets[i]
+                        if len( vertexSet.Vertices ) > 0:
+                                stf.WriteLine( '                                vertex_set ( {0} {1} {2} )'.format(i,vertexSet.iStart,len(vertexSet.Vertices)))
+
+                stf.WriteLine( '                            )' ) #vertex_sets
+                return
+
+
+        def WritePrimitives( self,stf ):
+                shape = self.DistanceLevel.LodControl.Shape
+                print ("Writing primitives")
+                # determine count
+                count = 0
+                iPrimState = -1
+                for eachPrimitive in self.Primitives:
+                        count += 1
+                        if eachPrimitive.iPrimState != iPrimState:
+                                iPrimState = eachPrimitive.iPrimState
+                                count += 1
+                stf.WriteLine( '                            primitives ( {0}'.format(count))
+
+                # and write out the primitives
+                iPrimState = -1
+                for eachPrimitive in self.Primitives:
+                        if eachPrimitive.iPrimState != iPrimState:
+                                iPrimState = eachPrimitive.iPrimState
+                                stf.WriteLine( '                                prim_state_idx ( {0} )'.format( iPrimState ) )
+                        primState = shape.PrimStates[iPrimState]
+                        vertexSet = self.VertexSets[ primState.iVertexState]
+                        eachPrimitive.Write( stf, vertexSet.iStart )
+
+                stf.WriteLine( '                            )' ) # primitives
+
+
+
+
+
+
+#######################################
+
+class DistanceLevel:
+
+        #hierarchy
+        #dlevel_selection
+
+        def __init__(self,parent):
+                self.LodControl = parent
+                self.SubObjects = []
+                self.Selection = 0      # maximum distance this distance level is visible
+                self.Hierarchy = []
+
+
+        def Write( self, stf ):
+                stf.WriteLine( '                distance_level (' )
+                print ("Writing distance level")
+
+                self.WriteHeader( stf )
+
+                count = len( self.SubObjects )
+                stf.WriteLine( '                    sub_objects ( {0}'.format(count))
+                for i in range( 0,count):
+                    self.SubObjects[i].Write(stf)
+                stf.WriteLine( '                    )')
+
+                stf.WriteLine( '                )')
+
+        def WriteHeader( self, stf ):
+                stf.WriteLine( '                    distance_level_header (' )
+                stf.WriteLine( '                        dlevel_selection ( {0} )'.format( self.Selection ) )
+
+                count = len( self.Hierarchy )
+                stf.Write( '                        hierarchy ( {0} '.format( count ) )
+                for i in range( 0,count ):
+                    stf.Write( '{0} '.format( self.Hierarchy[i] ) )
+                stf.WriteLine( ')')
+
+                stf.WriteLine( '                    )' )
+
+
+########################################
+
+class LodControl:
+
+        def __init__( self, parent ):
+                self.Shape = parent
+                self.DistanceLevels = []
+
+
+        def Write( self, stf ):
+                stf.WriteLine( '        lod_control (' )
+                stf.WriteLine( '            distance_levels_header ( 0 )' )
+
+                count = len( self.DistanceLevels )
+                stf.WriteLine( '            distance_levels ( {0}'.format(count))
+                for i in range(0,count):
+                    self.DistanceLevels[i].Write(stf)
+                stf.WriteLine( '            )')
+
+                stf.WriteLine( '        )')
+
+########################################
+
+class RotationKey:   #key
+
+    def __init__(self ):
+        self.Frame = 0
+        self.X = 0
+        self.Y = 0
+        self.Z = 0
+        self.W = 0
+
+
+    def Write( self, stf ):
+
+        stf.WriteLine( '                            slerp_rot ( {0} {1} {2} {3} {4} )'\
+                .format( int(self.Frame), round(self.X,8), round(self.Y,8), round(self.Z,8), round(self.W,8) ))  # note frame must be an int for ffeditc_unicode to compress it properly
+
+
+########################################
+
+class TCBRotationKey:    #key
+
+    def __init__(self ):
+        self.Frame = 0
+        self.X = 0
+        self.Y = 0
+        self.Z = 0
+        self.W = 0
+        self.Tension =  0
+        self.Continuity =  0
+        self.Bias =  0
+        self.In =  0
+        self.Out =  0
+
+
+    def Write( self, stf ):
+
+        stf.WriteLine( '                            tcb_key ( {0} {1} {2} {3} {4} {5} {6} {7} {8} {9} )'\
+                .format( int(self.Frame), self.X, self.Y, self.Z, self.W, self.Tension, self.Continuity, self.Bias, self.In, self.Out ))
+
+########################################
+
+class LinearKey:   # key
+
+    def __init__(self ):
+        self.Frame = 0
+        self.X = 0
+        self.Y = 0
+        self.Z = 0
+
+
+    def Write( self, stf ):
+
+        stf.WriteLine( '                            linear_key ( {0} {1} {2} {3} )'\
+                .format( int(self.Frame), round(self.X,8), round(self.Y,8),round( self.Z,8) ))
+
+########################################
+
+class PositionController:   # controller
+
+    def __init__( self ):
+        self.Keys = []
+
+
+    def Write( self, stf ):
+
+        stf.WriteLine('                     linear_pos ( {0}'.format(len(self.Keys)))
+        for eachKey in self.Keys:
+            eachKey.Write( stf )
+        stf.WriteLine('                     )')
+
+
+
+########################################
+
+class RotationController:     # controller
+
+    def __init__( self ):
+        self.Keys = []
+
+
+    def Write( self, stf ):
+
+        stf.WriteLine('                     tcb_rot ( {0}'.format(len(self.Keys)))
+        for eachKey in self.Keys:
+            eachKey.Write( stf )
+        stf.WriteLine('                     )')
+
+########################################
+
+class AnimationNode:
+
+        def __init__( self ):
+            self.Label = None
+            self.Controllers = []
+
+
+        def Write( self, stf ):
+            stf.WriteLine( '                anim_node {0} ('.format( self.Label ) )
+            stf.WriteLine( '                    controllers ( {0}'.format( len(self.Controllers) ) )
+            for eachController in self.Controllers:
+                eachController.Write( stf )
+            stf.WriteLine( '                    )' )
+            stf.WriteLine( '                )' )
+
+########################################
+
+class Animation:
+
+        def __init__( self ):
+            self.FrameCount = 0
+            self.FrameRate = 30
+            self.AnimationNodes = []
+
+
+        def Write( self, stf ):
+            stf.WriteLine( '        animation ( {0} {1}'.format( int(self.FrameCount), self.FrameRate) )
+            stf.WriteLine( '            anim_nodes ( {0}'.format( len(self.AnimationNodes) ) )
+            for eachAnimationNode in self.AnimationNodes:
+                eachAnimationNode.Write( stf )
+            stf.WriteLine( '            )')
+            stf.WriteLine( '        )' )
+
+
+########################################
+
+class Shape:
+
+
+        def __init__( self ):
+                self.Volumes = []
+                self.Shaders = []
+                self.Filters = []
+                self.Points = []
+                self.UVPoints = []
+                self.Normals = []
+                self.Matrices = []
+                self.Images = []
+                self.Textures = []
+                self.Colors = []
+                self.LightMaterials = []
+                self.LightConfigs = []
+                self.VertexStates = []
+                self.PrimStates = []
+                self.LodControls = []
+                self.Animations = []
+
+
+
+        def Write( self, filepath ):
+                stf = STFWriter( filepath )
+                stf.WriteLine( 'SIMISA@@@@@@@@@@JINX0s1t______\r\n' )
+                stf.WriteLine( 'shape (' )
+                stf.WriteLine( '    shape_header ( 00000000 00000000 )' )
+                self.WriteVolumes( stf )
+                self.WriteShaders( stf )
+                self.WriteFilters( stf )
+                self.WritePoints( stf )
+                self.WriteUVPoints( stf )
+                self.WriteNormals( stf )
+                self.WriteSortVectors( stf )
+                self.WriteColours( stf )
+                self.WriteMatrices( stf )
+                self.WriteImages(stf)
+                self.WriteTextures(stf )
+                self.WriteLightMaterials(stf)
+                self.WriteLightConfigs( stf )
+                self.WriteVertexStates(stf)
+                self.WritePrimStates(stf)
+                self.WriteLodControls(stf)
+                self.WriteAnimations(stf)
+                stf.WriteLine( ')' )
+                stf.Close()
+
+        def WriteVolumes( self, stf ):
+                print ("Writing volumes")
+                count = len( self.Volumes )
+                stf.WriteLine( '    volumes ( {0}'.format(count) )
+                for i in range( 0,count):
+                    self.Volumes[i].Write( stf )
+                stf.WriteLine( '    )' )
+
+        def WriteShaders( self, stf ):
+                print ("Writing shader names")
+                count = len( self.Shaders )
+                stf.WriteLine( '    shader_names ( {0}'.format( count ))
+                for i in range( 0, count ):
+                    stf.WriteLine( '        named_shader ( {0} )'.format( self.Shaders[i] ))
+                stf.WriteLine( '    )')
+
+        def WriteFilters( self, stf ):
+                print ("Writing texture filter names")
+                count = len( self.Filters )
+                stf.WriteLine( '    texture_filter_names ( {0}'.format(count))
+                for i in range( 0, count ):
+                    stf.WriteLine( '        named_filter_mode ( {0} )'.format( self.Filters[i]))
+                stf.WriteLine( '    )')
+
+
+        def WritePoints( self, stf ):
+                print ("Writing points")
+                count =  len( self.Points )
+                stf.WriteLine( '    points ( {0}'.format(count) )
+                for i in range( 0, count ):
+                    p = self.Points[i]
+                    stf.WriteLine( '        point ( {0} {1} {2} )'.format(round(p[0],6),round(p[1],6),round(p[2],6) ) )
+                stf.WriteLine( '    )' )
+
+
+        def WriteUVPoints( self, stf ):
+                print ("Writing uv points")
+                count =  len( self.UVPoints )
+                stf.WriteLine( '    uv_points ( {0}'.format(count) )
+                for i in range( 0, count ):
+                    p = self.UVPoints[i]
+                    stf.WriteLine( '        uv_point ( {0} {1} )'.format(round(p[0],6),round(p[1],6)) )
+                stf.WriteLine( '    )' )
+
+
+        def WriteNormals( self, stf ):
+                print ("Writing normals")
+                count =  len( self.Normals )
+                stf.WriteLine( '    normals ( {0}'.format(count) )
+                for i in range( 0, count ):
+                    p = self.Normals[i]
+                    stf.WriteLine( '        vector ( {0} {1} {2} )'.format(round(p[0],6),round(p[1],6),round(p[2],6) ) )
+                stf.WriteLine( '    )' )
+
+        def WriteSortVectors( self, stf ):
+                stf.WriteLine( '    sort_vectors ( 1' )
+                stf.WriteLine( '    	vector ( 0 0 0 )' )
+                stf.WriteLine( '    )' )
+
+
+        def WriteMatrices( self, stf ):
+                print ("Writing matrices")
+                count = len( self.Matrices )
+                stf.WriteLine( '    matrices ( {0}'.format( count ) )
+                for i in range( 0,count):
+                    self.Matrices[i].Write( stf )
+                stf.WriteLine( '    )' )
+
+        def WriteImages( self, stf ):
+                print ("Writing image names")
+                count = len( self.Images )
+                stf.WriteLine( '    images ( {0}'.format(count))
+                for i in range(0,count):
+                    imageFileName = self.Images[i]
+                    if imageFileName.count( ' ' ) == 0:   #only use quotes when spaces exist in name for SVIEW compatibility
+                        stf.WriteLine( '        image ( {0} )'.format( imageFileName ) )
+                    else:
+                        stf.WriteLine( '        image ( "{0}" )'.format( imageFileName ) )
+                stf.WriteLine( '    )' )
+
+        def WriteTextures( self, stf ):
+                print ("Writing textures")
+                count = len( self.Textures )
+                stf.WriteLine( '    textures ( {0}'.format(count))
+                for i in range(0,count):
+                    self.Textures[i].Write(stf)
+                stf.WriteLine( '    )' )
+
+        def WriteColours( self, stf ):
+                count = len( self.Colors )
+                stf.WriteLine( '    colours ( {0}'.format( count) )
+                for i in range( 0, count ):
+                    c = self.Colors[i]              # a r g b
+                    stf.WriteLine( '        colour ( {0} {1} {2} {3} )'.format( c[0],c[1],c[2],c[3] ) )
+                stf.WriteLine( '    )' )
+
+        def WriteLightMaterials( self, stf ):
+                count = len( self.LightMaterials )
+                stf.WriteLine( '    light_materials ( {0}'.format( count) )
+                for i in range( 0, count ):
+                    m = self.LightMaterials[i]
+                    stf.WriteLine( '        light_material ( 00000000 {0} {1} {2} {3} {4} )'.format( m[0],m[1],m[2],m[3],m[4] ) )
+                stf.WriteLine( '    )' )
+
+
+        def WriteLightConfigs( self, stf ):
+                print( "Writing light configs" )
+                count = len( self.LightConfigs )
+                stf.WriteLine( '    light_model_cfgs ( {0}'.format(count))
+                for i in range( 0,count ):
+                    self.LightConfigs[i].Write(stf)
+                stf.WriteLine( '    )')
+
+
+        def WriteVertexStates( self, stf ):
+                print ("Writing vertex states")
+                count = len( self.VertexStates )
+                stf.WriteLine( '    vtx_states ( {0}'.format(count))
+                for i in range( 0,count):
+                    self.VertexStates[i].Write( stf )
+                stf.WriteLine( '    )')
+
+
+        def WritePrimStates( self, stf ):
+                print ("Writing prim states")
+                count = len( self.PrimStates )
+                stf.WriteLine( '    prim_states ( {0}'.format(count))
+                for i in range( 0,count ):
+                    self.PrimStates[i].Write(stf)
+                stf.WriteLine( '    )')
+
+        def WriteLodControls(self, stf ):
+                count = len( self.LodControls )
+                stf.WriteLine( '    lod_controls ( {0}'.format( count ) )
+                for i in range(0,count):
+                    self.LodControls[i].Write(stf)
+                stf.WriteLine( '    )')
+
+
+
+        def WriteAnimations(self, stf ):
+                count = len( self.Animations )
+                if count > 0:    # ShapeViewer crashes if you have animations( 0 )
+                    stf.WriteLine( '    animations ( {0}'.format( count ) )
+                    for i in range(0,count):
+                        self.Animations[i].Write(stf)
+                    stf.WriteLine( '    )')
+
+'''
+************************* end library *******************************
+'''
+
+
+if __name__ == "__main__":
+   unregister()
+   register()
+
+#   print( "START" )
+#   ExportShapeFile( 'MAIN', r'C:\MSTS\GLOBAL\SHAPES\LPSTrack100m.s' ) #r'c:\users\wayne\desktop\out.s' ) #
+#   print( "DONE" )
+
+
