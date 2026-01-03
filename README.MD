@@ -1,8 +1,13 @@
 # README
 
+January 3, 2025
+
+Release 4.8.2 - Removes Attempts to make operational for Blender 5.  Maintains Blender 4.5 functionality.
+
+
 October 8, 2025
 
-Release 4.8.1
+Release 4.8.1 - do not use - there are ongoing issues with V5.0 Compatability.
 
 Repackage for easier installation in Blender.  **Use the Releases link on the right.**
 
