@@ -1,6 +1,6 @@
 # README
 
-January 3, 2025
+January 3, 2026
 
 Release 4.8.2 - Removes Attempts to make operational for Blender 5.  Maintains Blender 4.5 functionality.
 
