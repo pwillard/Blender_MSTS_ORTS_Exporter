@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (4, 8, 2),
+                "version": (5, 0, 0),
                 "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -11,7 +11,7 @@ bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
 
 
 '''
-COPYRIGHT 2019 by Wayne Campbell
+COPYRIGHT 2026 by Wayne Campbell/Pete Willard
 
 	This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2026-01-25      Released V4.8  - pkw - Version 4.5 Compatibility - shader node update
 2025-01-25      Released V4.8  - pkw - Version 4.5 Compatibility - shader node update
 2025-01-19      Released V4.7  - pkw - Fix for the deprecated specular which is now IOR (Index of Refraction) in 4.x
                 Note: It was causing the "recreateShaderNodes function to fail and cause the material nodes to all become disconnected.
@@ -520,32 +521,33 @@ def UpdateMSTSImage( self, context ):
 
 
 #####################################
+# apply MSTS material settings to Blender material display properties
+# intentionally does not change shader nodes or viewport state
+def ApplyMSTSMaterialSettings( material ):
+
+    if material == None:
+        return
+
+    material.use_backface_culling = True
+
+    transparency = material.msts.Transparency
+
+    if transparency == "OPAQUE":
+        material.blend_method = "OPAQUE"
+    elif transparency == "CLIP":
+        material.blend_method = "CLIP"
+    elif transparency == "ALPHA":
+        material.blend_method = "BLEND"
+    elif transparency == "ALPHA_SORT":
+        material.blend_method = "BLEND"
+
+#####################################
 # called when the MSTS material panel settings are changed
+# intentionally non-destructive: property edits only store MSTS exporter metadata
+# shader nodes and viewport state must be changed by explicit user actions
 def UpdateMSTSMaterial( self, context ):
 
-    if hasattr(context, 'material'):
-        if context.material != None:
-            mstsmaterial= context.material.msts
-            if mstsmaterial.UpdateNodes:
-
-                blM = context.material
-                blM.use_backface_culling = True
-
-                if blM.msts.Transparency == "OPAQUE":
-                    blM.blend_method = "OPAQUE"
-                elif blM.msts.Transparency == "CLIP":
-                    blM.blend_method = "CLIP"
-                elif blM.msts.Transparency == "ALPHA":
-                    blM.blend_method = "BLEND"
-                elif blM.msts.Transparency == "ALPHA_SORT":
-                    blM.blend_method = "BLEND"
-
-
-
-                RecreateShaderNodes( blM )
-
-                SetDefaultViewportShading( 'Layout' )
-                SetDefaultViewportShading( 'UV Editing' )
+    return
 
 #####################################
 class msts_material_panel(bpy.types.Panel):
