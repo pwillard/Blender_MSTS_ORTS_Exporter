@@ -155,18 +155,25 @@ def UpdateProgress():    # this is the little cursor counter progress indicator 
         ProgressIndicator = 0
 
 # Function to get mesh depending on Blender version
+# The returned mesh is temporary data owned by evaluated_obj and must be released
+# with release_evaluated_mesh(evaluated_obj) when processing is complete.
 def get_evaluated_mesh(obj):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated_obj = obj.evaluated_get(depsgraph)
+
     if BlenderVersion < (4, 1, 0):
         # Pre-Blender 4.1, use the standard evaluated object approach
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        evaluated_obj = obj.evaluated_get(depsgraph)
         mesh = evaluated_obj.to_mesh()
     else:
-        # Blender 4.1+ requires alternate handling
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        evaluated_obj = obj.evaluated_get(depsgraph)
+        # Blender 4.1+ needs the depsgraph passed when preserving data layers
         mesh = evaluated_obj.to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
-    return mesh
+
+    return evaluated_obj, mesh
+
+
+def release_evaluated_mesh(evaluated_obj):
+    if evaluated_obj != None:
+        evaluated_obj.to_mesh_clear()
 
 
 class ExportHelper:
@@ -285,23 +292,67 @@ class MSTSExporter(bpy.types.Operator, ExportHelper):
 def menu_func(self, context):
     self.layout.operator(MSTSExporter.bl_idname, text="OpenRails/MSTS (.s)")
 
+
+def registered_classes():
+    return (
+        msts_material_props,
+        msts_scene_props,
+        MSTS_OT_apply_material_settings,
+        MSTS_OT_rebuild_shader_nodes,
+        msts_material_panel,
+        MSTSExporter,
+    )
+
+
+def unregister_class_safe(blender_class):
+    try:
+        bpy.utils.unregister_class(blender_class)
+    except RuntimeError:
+        pass
+
+
+def remove_export_menu_safe():
+    try:
+        bpy.types.TOPBAR_MT_file_export.remove(menu_func)
+    except (RuntimeError, ValueError):
+        pass
+
+
 def register():
-    bpy.utils.register_class( msts_material_props)  # define the new msts material properties
-    bpy.utils.register_class( msts_scene_props)
+    # Avoid duplicate menu entries during script reloads.
+    remove_export_menu_safe()
+
+    property_classes = registered_classes()[0:2]
+    ui_classes = registered_classes()[2:]
+
+    for blender_class in property_classes:
+        bpy.utils.register_class(blender_class)
+
     bpy.types.Material.msts = bpy.props.PointerProperty(type=msts_material_props)   # add the properties to the material type
     bpy.types.Scene.msts = bpy.props.PointerProperty(type=msts_scene_props)
-    bpy.utils.register_class( msts_material_panel )                               # add a UI panel to the Materials window
-    bpy.utils.register_class( MSTSExporter )                                    # define the exporter dialog panel
+
+    for blender_class in ui_classes:
+        bpy.utils.register_class(blender_class)
+
     bpy.types.TOPBAR_MT_file_export.append(menu_func)                             # add the exporter to the menu
 
+
 def unregister():
-    bpy.types.TOPBAR_MT_file_export.remove(menu_func)
-    bpy.utils.unregister_class( MSTSExporter )
-    bpy.utils.unregister_class( msts_material_panel )
-    del bpy.types.Scene.msts
-    del bpy.types.Material.msts
-    bpy.utils.unregister_class( msts_scene_props)
-    bpy.utils.unregister_class( msts_material_props )
+    remove_export_menu_safe()
+
+    property_classes = registered_classes()[0:2]
+    ui_classes = registered_classes()[2:]
+
+    for blender_class in reversed(ui_classes):
+        unregister_class_safe(blender_class)
+
+    if hasattr(bpy.types.Scene, "msts"):
+        del bpy.types.Scene.msts
+    if hasattr(bpy.types.Material, "msts"):
+        del bpy.types.Material.msts
+
+    for blender_class in reversed(property_classes):
+        unregister_class_safe(blender_class)
 
 '''
 ************************ THE GUI *******************************
@@ -377,14 +428,36 @@ def GetImage( filepath ):
     # TODO Add support for additional msts lighting modes, eg cruciform, etc """
 
 def RecreateShaderNodes(m):
-    """Safely recreate shader nodes across Blender 3.6 → 4.5"""
-    import bpy, os
+    """Safely recreate shader nodes across Blender 3.6 → 5.x."""
+
+    if m == None:
+        return
 
     m.use_nodes = True
+    if m.node_tree == None:
+        print(f"Unable to recreate shader nodes for '{m.name}': material has no node tree")
+        return
+
     nodes = m.node_tree.nodes
     links = m.node_tree.links
 
-    # Clear existing nodes and links
+    def first_socket(sockets, names):
+        for name in names:
+            socket = sockets.get(name)
+            if socket != None:
+                return socket
+        return None
+
+    def safe_link(input_socket, output_socket):
+        if input_socket != None and output_socket != None:
+            links.new(input_socket, output_socket)
+
+    def set_socket_default(socket, value):
+        if socket != None and hasattr(socket, "default_value"):
+            socket.default_value = value
+
+    # Clear existing nodes. This is intentionally destructive, but this function
+    # is only called by the explicit "Rebuild MSTS Shader Nodes" operator.
     nodes.clear()
 
     # Create required nodes
@@ -400,55 +473,54 @@ def RecreateShaderNodes(m):
     uv.location = (-550, 0)
 
     # --- Image Texture ---
-    img_path = bpy.path.abspath(m.msts.BaseColorFilepath)
-    if os.path.exists(img_path):
-        tex.image = bpy.data.images.load(img_path, check_existing=True)
+    base_color_filepath = getattr(m.msts, "BaseColorFilepath", "")
+    if base_color_filepath:
+        img_path = bpy.path.abspath(base_color_filepath)
+        if os.path.isfile(img_path):
+            try:
+                tex.image = bpy.data.images.load(img_path, check_existing=True)
+            except RuntimeError as error:
+                print(f"Unable to load image '{img_path}' for material '{m.name}': {error}")
 
     # --- Connect nodes safely ---
-    # Base Color
-    base_color_input = bsdf.inputs.get("Base Color") or bsdf.inputs.get("BaseColor")
-    if base_color_input and tex.outputs.get("Color"):
-        links.new(base_color_input, tex.outputs["Color"])
+    safe_link(first_socket(bsdf.inputs, ["Base Color", "BaseColor"]), tex.outputs.get("Color"))
 
-    # Alpha (transparency)
-    if bsdf.inputs.get("Alpha") and tex.outputs.get("Alpha"):
-        links.new(bsdf.inputs["Alpha"], tex.outputs["Alpha"])
+    transparency = getattr(m.msts, "Transparency", "OPAQUE")
+    if transparency != "OPAQUE":
+        safe_link(bsdf.inputs.get("Alpha"), tex.outputs.get("Alpha"))
 
-    # UV Map connection
-    if tex.inputs.get("Vector") and uv.outputs.get("UV"):
-        links.new(tex.inputs["Vector"], uv.outputs["UV"])
+    safe_link(tex.inputs.get("Vector"), uv.outputs.get("UV"))
+    safe_link(output.inputs.get("Surface"), first_socket(bsdf.outputs, ["BSDF", "Shader"]))
 
-    # BSDF to Output
-    if output.inputs.get("Surface") and bsdf.outputs.get("BSDF"):
-        links.new(output.inputs["Surface"], bsdf.outputs["BSDF"])
+    # --- Lighting / specularity handling ---
+    lighting = getattr(m.msts, "Lighting", "NORMAL")
+    roughness_input = bsdf.inputs.get("Roughness")
 
-    # --- Specularity / IOR Handling ---
-    if bpy.app.version < (4, 0, 0):
-        # Pre-4.0 used Specular input
-        spec_input = bsdf.inputs.get("Specular")
-        if spec_input:
-            if m.msts.Lighting == 'SPECULAR25':
-                spec_input.default_value = 0.1
-                bsdf.inputs["Roughness"].default_value = 0.3
-            elif m.msts.Lighting == 'SPECULAR750':
-                spec_input.default_value = 0.1
-                bsdf.inputs["Roughness"].default_value = 0.1
-            else:
-                spec_input.default_value = 0.0
-                bsdf.inputs["Roughness"].default_value = 1.0
+    if lighting == 'SPECULAR25':
+        specular_value = 0.1
+        ior_value = 1.25
+        roughness_value = 0.3
+    elif lighting == 'SPECULAR750':
+        specular_value = 0.1
+        ior_value = 1.75
+        roughness_value = 0.1
     else:
-        # Blender 4.x uses IOR
-        ior_input = bsdf.inputs.get("IOR")
-        if ior_input:
-            if m.msts.Lighting == 'SPECULAR25':
-                ior_input.default_value = 1.25
-                bsdf.inputs["Roughness"].default_value = 0.3
-            elif m.msts.Lighting == 'SPECULAR750':
-                ior_input.default_value = 1.75
-                bsdf.inputs["Roughness"].default_value = 0.1
-            else:
-                ior_input.default_value = 1.0
-                bsdf.inputs["Roughness"].default_value = 1.0
+        specular_value = 0.0
+        ior_value = 1.0
+        roughness_value = 1.0
+
+    set_socket_default(roughness_input, roughness_value)
+
+    # Prefer feature detection over Blender version checks. Different Blender
+    # versions have used Specular, Specular IOR Level, and/or IOR sockets on the
+    # Principled BSDF node.
+    specular_input = first_socket(bsdf.inputs, ["Specular", "Specular IOR Level"])
+    ior_input = bsdf.inputs.get("IOR")
+
+    if specular_input != None:
+        set_socket_default(specular_input, specular_value)
+    if ior_input != None:
+        set_socket_default(ior_input, ior_value)
 
     # Set active and finalize
     m.node_tree.nodes.active = bsdf
@@ -550,6 +622,56 @@ def UpdateMSTSMaterial( self, context ):
     return
 
 #####################################
+# return the active material in both Properties editor and fallback contexts
+# Blender background/operator tests may not provide context.material.
+def ActiveMSTSMaterial(context):
+
+    material = getattr(context, "material", None)
+    if material == None:
+        active_object = getattr(context, "object", None)
+        if active_object != None:
+            material = getattr(active_object, "active_material", None)
+
+    if material != None and hasattr(material, "msts"):
+        return material
+
+    return None
+
+#####################################
+# explicitly apply MSTS material settings to Blender material display properties
+class MSTS_OT_apply_material_settings(bpy.types.Operator):
+    bl_idname = "material.msts_apply_material_settings"
+    bl_label = "Apply MSTS Material Settings"
+    bl_description = "Apply MSTS transparency settings to the Blender material without changing shader nodes"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return ActiveMSTSMaterial(context) != None
+
+    def execute(self, context):
+        ApplyMSTSMaterialSettings(ActiveMSTSMaterial(context))
+        return {'FINISHED'}
+
+#####################################
+# explicitly rebuild MSTS shader nodes for the active material
+class MSTS_OT_rebuild_shader_nodes(bpy.types.Operator):
+    bl_idname = "material.msts_rebuild_shader_nodes"
+    bl_label = "Rebuild MSTS Shader Nodes"
+    bl_description = "Replace this material's shader node tree with a simple MSTS-compatible shader setup"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return ActiveMSTSMaterial(context) != None
+
+    def execute(self, context):
+        material = ActiveMSTSMaterial(context)
+        ApplyMSTSMaterialSettings(material)
+        RecreateShaderNodes(material)
+        return {'FINISHED'}
+
+#####################################
 class msts_material_panel(bpy.types.Panel):
     """Creates a Panel in the material context of the properties editor"""
     bl_label = "MSTS Materials"
@@ -560,8 +682,9 @@ class msts_material_panel(bpy.types.Panel):
 
     def draw(self, context):   # see bpy.context for info on available context's
 
-        if context.material != None:
-            mstsmaterial= context.material.msts
+        material = ActiveMSTSMaterial(context)
+        if material != None:
+            mstsmaterial= material.msts
 
             layout = self.layout
             layout.use_property_split = True
@@ -576,6 +699,9 @@ class msts_material_panel(bpy.types.Panel):
                                                               # but here is simpler for the user to find
             col.prop(mstsmaterial, property="BaseColorFilepath" )
             col.prop(mstsmaterial, property="UpdateNodes" )
+            col.separator()
+            col.operator("material.msts_apply_material_settings", icon='CHECKMARK')
+            col.operator("material.msts_rebuild_shader_nodes", icon='NODETREE')
 
 
 #####################################
@@ -591,7 +717,6 @@ class msts_material_props(bpy.types.PropertyGroup):
                           ( "ALPHA_SORT","Alpha Sorted",        "Alpha blending with depth sort" )
                         ],
                 default="OPAQUE",
-                update= UpdateMSTSMaterial,
                 )
 
     Lighting : bpy.props.EnumProperty(
@@ -607,7 +732,6 @@ class msts_material_props(bpy.types.PropertyGroup):
                           ("EMISSIVE",       "Emissive",     "Surfaces emit light at night" )
                         ],
                 default="NORMAL",
-                update= UpdateMSTSMaterial,
                 )
 
     MipMapLODBias : bpy.props.FloatProperty(
@@ -622,15 +746,13 @@ class msts_material_props(bpy.types.PropertyGroup):
 
     BaseColorFilepath : StringProperty(
                 description = 'The texture image file path.',
-                update= UpdateMSTSImage,
                 subtype='FILE_PATH',
                 )
 
     UpdateNodes : BoolProperty(
-                name='Update Shader',
-                description = 'Change shader nodes to match these settings',
+                name='Legacy Update Shader',
+                description = 'Legacy setting kept for compatibility. Use Rebuild MSTS Shader Nodes to update shader nodes.',
                 default = True ,
-                update= UpdateMSTSMaterial,
                 )
 
 
@@ -1239,6 +1361,26 @@ def HasGeometry( object ):
     return object.type in ['MESH']  # TODO add support for 'CURVE','SURFACE','META','FONT'
 
 #####################################
+# return a per-corner smooth normal in a way that works across Blender versions
+# Blender 4.1+ removed parts of the old split normal workflow; corner_normals is
+# the preferred source when present, while older versions can still use triangle
+# split_normals.
+def GetTriangleSmoothNormal( mesh, blTriangle, triangleVertexIndex ):
+
+    iLoop = blTriangle.loops[triangleVertexIndex]
+
+    if hasattr(mesh, "corner_normals"):
+        cornerNormal = mesh.corner_normals[iLoop]
+        vector = getattr(cornerNormal, "vector", cornerNormal)
+        return mathutils.Vector(vector)
+
+    if hasattr(blTriangle, "split_normals"):
+        return mathutils.Vector(blTriangle.split_normals[triangleVertexIndex])
+
+    return mathutils.Vector(mesh.vertices[blTriangle.vertices[triangleVertexIndex]].normal)
+
+
+#####################################
 # adds to a sub_object in this distance_level
 # iPointOffset informs the difference between the blender vertex index and the msts vertex index
 # normal specifies an override to the blender supplied normal, eg Normals.Face .Out .Up .Smooth etc
@@ -1282,8 +1424,10 @@ def AddTriangleToSubObject( mesh, mstsMaterial, blTriangle , windingOrder, offse
             elif normalOverride == Normals.Up:
                 normal = ( 0,0,1 )
             elif normalOverride == Normals.Smooth:
-                # support Auto smooth
-                normal=Vector(blTriangle.split_normals[i])
+                # support smooth/custom normals across Blender versions
+                normal = mstsMaterial.normalOverridesByVertex.get(iblVert)
+                if normal == None:
+                    normal = GetTriangleSmoothNormal(mesh, blTriangle, i)
                 normal = offsetMatrix.to_3x3() @ normal
                 normal.normalize()
             elif normalOverride == Normals.OutX:
@@ -1332,6 +1476,7 @@ class MSTSMaterialDetail:
         self.priority = 0
         self.uv_layers = []
         self.normalOverride = Normals.Face
+        self.normalOverridesByVertex = {}
         self.subObject = None
         self.iTextures = []
         self.uvops = []
@@ -1349,7 +1494,7 @@ class MSTSMaterialDetail:
         self.blMaterial = None   # corresponding Blender material
 
 
-def GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, iHierarchy, objectName):
+def GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, normalOverridesByVertex, iHierarchy, objectName):
 
     mstsMaterial = MSTSMaterialDetail()
 
@@ -1358,6 +1503,7 @@ def GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, iHi
     mstsMaterial.iHierarchy = iHierarchy
 
     mstsMaterial.normalOverride = normalOverride
+    mstsMaterial.normalOverridesByVertex = normalOverridesByVertex
 
     if blMaterial.msts.Transparency == 'ALPHA':
         mstsMaterial.flags = '00000400 -1 -1 000001d2 000001c4'
@@ -1464,14 +1610,19 @@ def AddMesh( distanceLevel, mesh, iHierarchy, offsetMatrix, normalsProperty, obj
         normalOverride = Normals.OutX
     # evaluate any special handling for normals
     #   Note: these may be overriden 'per face' in AddFaceToSubObject
+    normalOverridesByVertex = {}
+
     if normalOverride == Normals.Fillet:
         # preprocess normals for filleted appearance
         # verts in a flat face will use the face normal
         # verts in a smoothed face use the normal of the adjacent flat face
+        # Do not assign to mesh.vertices[i].normal: computed mesh normals are not
+        # writable/reliable across newer Blender versions. Keep exporter-only
+        # overrides instead.
         for tri in mesh.loop_triangles:
             if not tri.use_smooth:
                 for iVert in tri.vertices:
-                  mesh.vertices[iVert].normal = tri.normal
+                    normalOverridesByVertex[iVert] = mathutils.Vector(tri.normal)
         # now handle them like standard smoothed normals
         normalOverride = Normals.Face
 
@@ -1484,7 +1635,7 @@ def AddMesh( distanceLevel, mesh, iHierarchy, offsetMatrix, normalsProperty, obj
     mstsMaterials = []
     for blMaterial in mesh.materials:
         if blMaterial != None:
-            mstsMaterials.append( GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, iHierarchy, objectName ) )
+            mstsMaterials.append( GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, normalOverridesByVertex, iHierarchy, objectName ) )
         else:
             raise MyException( "Empty Material on object: " + objectName )
 
@@ -1582,14 +1733,16 @@ def AddObject( distanceLevel, object, iHierarchy, relativeMatrix ):
             #Update here for Blender 4.1
             #mesh = ob_to_convert.to_mesh()
             
-            mesh = get_evaluated_mesh(object)
+            evaluated_obj, mesh = get_evaluated_mesh(object)
+            try:
+                if hasattr(mesh, "calc_normals_split"):
+                    mesh.calc_normals_split()
+                
+                mesh.calc_loop_triangles()
 
-            if BlenderVersion < (4,1,0):    # cope with loss of this feature in Blender 4.1 +
-                mesh.calc_normals_split()
-            
-            mesh.calc_loop_triangles()
-
-            AddMesh( distanceLevel, mesh, iHierarchy, relativeMatrix, normalsProperty, object.name )
+                AddMesh( distanceLevel, mesh, iHierarchy, relativeMatrix, normalsProperty, object.name )
+            finally:
+                release_evaluated_mesh(evaluated_obj)
 
 
 
