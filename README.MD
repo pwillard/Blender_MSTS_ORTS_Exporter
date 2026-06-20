@@ -1,5 +1,11 @@
 # README
 
+June 19, 2026
+
+Release 5.1.1 - Blender 5.x compatible release. 
+Maintain support for older releases and fix minor compatibility issues. 
+Tweaks how Animations are handled.
+
 January 3, 2026
 
 Release 4.8.2 - Removes Attempts to make operational for Blender 5.  Maintains Blender 4.5 functionality.
