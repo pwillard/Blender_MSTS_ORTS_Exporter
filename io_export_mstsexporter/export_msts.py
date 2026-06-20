@@ -31,7 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
-2026-01-25      Released V4.8  - pkw - Version 4.5 Compatibility - shader node update
+2026-05-26      Released V5.0  - pkw - Version 5.x Compatibility - shader node update fixed for 5
 2025-01-25      Released V4.8  - pkw - Version 4.5 Compatibility - shader node update
 2025-01-19      Released V4.7  - pkw - Fix for the deprecated specular which is now IOR (Index of Refraction) in 4.x
                 Note: It was causing the "recreateShaderNodes function to fail and cause the material nodes to all become disconnected.
@@ -638,7 +638,11 @@ def ActiveMSTSMaterial(context):
     return None
 
 #####################################
-# explicitly apply MSTS material settings to Blender material display properties
+# Explicitly apply MSTS material settings to Blender material display properties
+# Specifically due to Blender 5.x changes, this is no longer automatically applied when the user changes 
+# the settings in the MSTS Material panel, but instead requires the user to click 
+# "Apply MSTS Material Settings" button. This is to avoid unintended destructive changes to the shader 
+# nodes when the user is just trying to edit the MSTS metadata properties.
 class MSTS_OT_apply_material_settings(bpy.types.Operator):
     bl_idname = "material.msts_apply_material_settings"
     bl_label = "Apply MSTS Material Settings"
@@ -803,7 +807,7 @@ def TryGetRelPath( filepath ):
 
 #####################################
 # specifies how normals are to be calculated
-class Normals:       # passed to AddFaceToSubObject to request special handling of normals
+class Normals:          # passed to AddFaceToSubObject to request special handling of normals
         Face = 0        # flat normals
         Smooth = 1      # smoothed ( can be overriden per face )
         Out = 3         # normals radiate out from center of model   Mesh or Material Property:  NORMALS = OUT
@@ -1875,17 +1879,43 @@ def CompactSubObjects( ):
 
 
 #####################################
-def CreateEulerRotationController( iFC, fcurves ):
+def GetFcurvesByArrayIndex( fcurves, dataPath ):
+
+    indexedFCurves = {}
+    for eachFCurve in fcurves:
+        if eachFCurve.data_path == dataPath:
+            indexedFCurves[eachFCurve.array_index] = eachFCurve
+    return indexedFCurves
+
+#####################################
+def GetFcurveFrames( indexedFCurves ):
+
+    frames = set()
+    for eachFCurve in indexedFCurves.values():
+        for eachKey in eachFCurve.keyframe_points:
+            frames.add( eachKey.co[0] )
+    return sorted( frames )
+
+#####################################
+def EvaluateFcurve( indexedFCurves, arrayIndex, frame, defaultValue ):
+
+    fcurve = indexedFCurves.get( arrayIndex )
+    if fcurve == None:
+        return defaultValue
+    return fcurve.evaluate( frame )
+
+#####################################
+def CreateEulerRotationController( fcurves, defaultRotation ):
 
     rotationController = RotationController()
+    indexedFCurves = GetFcurvesByArrayIndex( fcurves, 'rotation_euler' )
 
-    #TODO this assumes all points are lined up at the same time
-    for iKey in range(0,len(fcurves[iFC].keyframe_points)):
+    for frame in GetFcurveFrames( indexedFCurves ):
         key = RotationKey()
-        key.Frame = fcurves[iFC].keyframe_points[iKey].co[0]
-        x = fcurves[iFC+0].keyframe_points[iKey].co[1]
-        y = fcurves[iFC+1].keyframe_points[iKey].co[1]  #Note coordinate conversion
-        z = fcurves[iFC+2].keyframe_points[iKey].co[1]
+        key.Frame = frame
+        x = EvaluateFcurve( indexedFCurves, 0, frame, defaultRotation[0] )
+        y = EvaluateFcurve( indexedFCurves, 1, frame, defaultRotation[1] )  #Note coordinate conversion
+        z = EvaluateFcurve( indexedFCurves, 2, frame, defaultRotation[2] )
 
         euler = mathutils.Euler( ( x,y,z ), 'XYZ' )
         quat = euler.to_quaternion()
@@ -1900,34 +1930,34 @@ def CreateEulerRotationController( iFC, fcurves ):
 
 
 #####################################
-def CreateRotationController( iFC, fcurves ):
+def CreateRotationController( fcurves, defaultRotation ):
 
     rotationController = RotationController()
+    indexedFCurves = GetFcurvesByArrayIndex( fcurves, 'rotation_quaternion' )
 
-    #TODO this assumes all points are lined up at the same time
-    for iKey in range(0,len(fcurves[iFC].keyframe_points)):
+    for frame in GetFcurveFrames( indexedFCurves ):
         key = RotationKey()
-        key.Frame = fcurves[iFC].keyframe_points[iKey].co[0]
-        key.W = fcurves[iFC].keyframe_points[iKey].co[1]
-        key.X = fcurves[iFC+1].keyframe_points[iKey].co[1]
-        key.Y = fcurves[iFC+3].keyframe_points[iKey].co[1]  #Note coordinate conversion
-        key.Z = fcurves[iFC+2].keyframe_points[iKey].co[1]
+        key.Frame = frame
+        key.W = EvaluateFcurve( indexedFCurves, 0, frame, defaultRotation[0] )
+        key.X = EvaluateFcurve( indexedFCurves, 1, frame, defaultRotation[1] )
+        key.Y = EvaluateFcurve( indexedFCurves, 3, frame, defaultRotation[3] )  #Note coordinate conversion
+        key.Z = EvaluateFcurve( indexedFCurves, 2, frame, defaultRotation[2] )
         rotationController.Keys.append( key )
 
     return rotationController
 
 #####################################
-def CreateLinearController( iFC, fcurves ):
+def CreateLinearController( fcurves, defaultLocation ):
 
     linearController = PositionController()
+    indexedFCurves = GetFcurvesByArrayIndex( fcurves, 'location' )
 
-    #TODO this assumes all points are lined up on the same frame
-    for iKey in range( 0, len(fcurves[iFC].keyframe_points) ):
+    for frame in GetFcurveFrames( indexedFCurves ):
         key = LinearKey()
-        key.Frame = fcurves[iFC].keyframe_points[iKey].co[0]
-        key.X = fcurves[iFC].keyframe_points[iKey].co[1]
-        key.Y = fcurves[iFC+2].keyframe_points[iKey].co[1]  #Note coordinate conversion
-        key.Z = fcurves[iFC+1].keyframe_points[iKey].co[1]
+        key.Frame = frame
+        key.X = EvaluateFcurve( indexedFCurves, 0, frame, defaultLocation[0] )
+        key.Y = EvaluateFcurve( indexedFCurves, 2, frame, defaultLocation[2] )  #Note coordinate conversion
+        key.Z = EvaluateFcurve( indexedFCurves, 1, frame, defaultLocation[1] )
         linearController.Keys.append( key )
 
     return linearController
@@ -1940,19 +1970,26 @@ def CreateAnimationNode( nodeObject ):
     if nodeObject.animation_data != None:
         if nodeObject.animation_data.action != None:
             fcurves = nodeObject.animation_data.action.fcurves
+            processedDataPaths = set()
             iFC = 0
             while iFC < len( fcurves ):
-                if fcurves[iFC].data_path == 'rotation_quaternion':
-                    animationNode.Controllers.append( CreateRotationController( iFC, fcurves ) )
-                    iFC += 4
-                elif fcurves[iFC].data_path == 'rotation_euler':
-                    animationNode.Controllers.append( CreateEulerRotationController( iFC, fcurves ) )
-                    iFC += 3
-                elif fcurves[iFC].data_path == 'location':
-                    animationNode.Controllers.append( CreateLinearController( iFC, fcurves ) )
-                    iFC += 3
+                dataPath = fcurves[iFC].data_path
+                if dataPath in processedDataPaths:
+                    iFC += 1
+                elif dataPath == 'rotation_quaternion':
+                    animationNode.Controllers.append( CreateRotationController( fcurves, nodeObject.rotation_quaternion ) )
+                    processedDataPaths.add( dataPath )
+                    iFC += 1
+                elif dataPath == 'rotation_euler':
+                    animationNode.Controllers.append( CreateEulerRotationController( fcurves, nodeObject.rotation_euler ) )
+                    processedDataPaths.add( dataPath )
+                    iFC += 1
+                elif dataPath == 'location':
+                    animationNode.Controllers.append( CreateLinearController( fcurves, nodeObject.location ) )
+                    processedDataPaths.add( dataPath )
+                    iFC += 1
                 else:
-                    print( 'Unknown controller type ',fcurves[iFC].data_path,' in ',nodeObject.name )
+                    print( 'Unknown controller type ',dataPath,' in ',nodeObject.name )
                     iFC += 1
 
 
