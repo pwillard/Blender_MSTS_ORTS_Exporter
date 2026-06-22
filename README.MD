@@ -1,10 +1,16 @@
 # README
 
-June 19, 2026
+June 21, 2026
 
-Release 5.1.1 - Blender 5.x compatible release. 
-Maintain support for older releases and fix minor compatibility issues. 
-Tweaks how Animations are handled.
+Release 5.1.1 - Animation Update
+
+ Add to the list of known Animation types.
+
+June 19,  2026
+
+ Release 5.1.0 - Blender 5.x compatible release.  
+ Maintain support for older releases and fix minor compatibility issues. 
+ Tweaks how Animations are handled.
 
 January 3, 2026
 
