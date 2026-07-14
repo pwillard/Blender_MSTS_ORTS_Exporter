@@ -1,2 +1,3 @@
 *.zip
-dist
+dist/
+/package_release.py
