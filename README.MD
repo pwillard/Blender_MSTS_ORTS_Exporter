@@ -1,5 +1,12 @@
 # README
 
+July 15, 2026
+
+Release 5.2.0 - Blender 5.2 LTS compatibility update.
+
+Verified registration and a minimal export smoke test with Blender 5.2 LTS while maintaining the existing Blender 5.x compatibility path.
+
+
 June 21, 2026
 
 Release 5.1.1 - Animation Update
