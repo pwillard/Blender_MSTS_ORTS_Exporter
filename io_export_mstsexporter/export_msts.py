@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (5, 1, 2),
+                "version": (5, 2, 0),
                 "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -31,6 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2026-07-15      Released V5.2  - pkw - Blender 5.2 LTS compatibility verification.
 2026-05-26      Released V5.0  - pkw - Version 5.x Compatibility - shader node update fixed for 5
 2025-01-25      Released V4.8  - pkw - Version 4.5 Compatibility - shader node update
 2025-01-19      Released V4.7  - pkw - Fix for the deprecated specular which is now IOR (Index of Refraction) in 4.x
@@ -149,7 +150,8 @@ def UpdateProgress():    # this is the little cursor counter progress indicator 
 
     global ProgressIndicator
     global ProgressContext
-    ProgressContext.window_manager.progress_update(ProgressIndicator)
+    if ProgressContext != None and getattr(ProgressContext, "window_manager", None) != None:
+        ProgressContext.window_manager.progress_update(ProgressIndicator)
     ProgressIndicator += 0.0001
     if ProgressIndicator > 1.0:
         ProgressIndicator = 0
