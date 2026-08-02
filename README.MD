@@ -1,5 +1,9 @@
 # README
 
+August 2, 2026
+
+Release 5.2.1 - Fixes Blender 5.2 Action/f-curve export handling for animated ENGINE objects and prevents the cancel callback from reporting a Context object as an error message.
+
 July 15, 2026
 
 Release 5.2.0 - Blender 5.2 LTS compatibility update.

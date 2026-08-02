@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (5, 2, 0),
+                "version": (5, 2, 1),
                 "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -31,6 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2026-08-02      Released V5.2.1  - pkw - Blender 5.2 Action slot/f-curve compatibility and export cancel callback fix
 2026-07-15      Released V5.2  - pkw - Blender 5.2 LTS compatibility verification.
 2026-05-26      Released V5.0  - pkw - Version 5.x Compatibility - shader node update fixed for 5
 2025-01-25      Released V4.8  - pkw - Version 4.5 Compatibility - shader node update
@@ -285,10 +286,8 @@ class MSTSExporter(bpy.types.Operator, ExportHelper):
         finally:
             context.window_manager.progress_end()
 
-    def cancel( self, message ):
-        print( "ERROR: ", message )
-        self.report( {'ERROR'}, message )
-        return {'CANCELLED' }
+    def cancel( self, context ):
+        print( "Export cancelled" )
 
 
 def menu_func(self, context):
@@ -1225,11 +1224,38 @@ def ConstructMatrix( ancestor, object ):
 #####################################
 def IsMSTSDefinedName( name ):
 
-    #if its one of the automatically animated parts
-    # TODO Include any allcaps part
+    # if it is one of the automatically animated or OpenRails-controlled parts
     mstsName = MSTSName( name)
-    animatedParts = ('BOGIE1','BOGIE2','WHEELS11','WHEELS12','WHEELS13','WHEELS21','WHEELS22','WHEELS23' )
-    return animatedParts.count( mstsName.upper() ) > 0
+    mstsNameUpper = mstsName.upper()
+
+    animatedParts = ('BOGIE1','BOGIE2')
+    if animatedParts.count( mstsNameUpper ) > 0:
+        return True
+
+    animatedPrefixes = (
+        'WHEELS',
+        'WIPER',
+        'DOOR_A','DOOR_B','DOOR_C','DOOR_D','DOOR_E','DOOR_F',
+        'MIRROR',
+        'LEFTWINDOWFRONT','RIGHTWINDOWFRONT','LEFTWINDOWREAR','RIGHTWINDOWREAR',
+        'UNLOADINGPARTS',
+        'ORTSBELL',
+        'ORTSITEM1CONTINUOUS','ORTSITEM1TWOSTATE',
+        'ORTSITEM2CONTINUOUS','ORTSITEM2TWOSTATE',
+        'ORTSBRAKECYLINDER','ORTSHANDBRAKE','ORTSBRAKERIGGING'
+    )
+    for eachPrefix in animatedPrefixes:
+        if mstsNameUpper.startswith( eachPrefix ):
+            return True
+
+    # OpenRails hard-codes support for four pantographs. Any name containing
+    # PANTO and one of the supported pantograph numbers uses that trigger.
+    if 'PANTO' in mstsNameUpper:
+        for pantographNumber in ('1','2','3','4'):
+            if pantographNumber in mstsNameUpper:
+                return True
+
+    return False
 
 
 #####################################
@@ -1238,10 +1264,50 @@ def IsAnimated( nodeObject ):
     #it has some animation defined
     if nodeObject.animation_data != None:
         if nodeObject.animation_data.action != None:
-            fcurves = nodeObject.animation_data.action.fcurves
+            fcurves = GetActionFCurves( nodeObject.animation_data.action, nodeObject )
             if len(fcurves) > 0:
                 return True
     return False
+
+#####################################
+def GetActionFCurves( action, nodeObject = None ):
+
+    if action == None:
+        return []
+
+    # Blender 4.x and earlier exposed fcurves directly on Action. Blender 5.x
+    # stores them in layer/strip channelbags, keyed by the object's action slot.
+    fcurves = getattr( action, 'fcurves', None )
+    if fcurves != None:
+        return fcurves
+
+    actionSlotHandle = None
+    if nodeObject != None:
+        animationData = getattr( nodeObject, 'animation_data', None )
+        if animationData != None:
+            actionSlot = getattr( animationData, 'action_slot', None )
+            if actionSlot != None:
+                actionSlotHandle = getattr( actionSlot, 'handle', None )
+            if actionSlotHandle == None:
+                actionSlotHandle = getattr( animationData, 'action_slot_handle', None )
+
+    matchingFCurves = []
+    for eachLayer in getattr( action, 'layers', () ):
+        for eachStrip in getattr( eachLayer, 'strips', () ):
+            for eachChannelbag in getattr( eachStrip, 'channelbags', () ):
+                if actionSlotHandle != None:
+                    channelbagSlotHandle = getattr( eachChannelbag, 'slot_handle', None )
+                    channelbagSlot = getattr( eachChannelbag, 'slot', None )
+                    if channelbagSlotHandle == None and channelbagSlot != None:
+                        channelbagSlotHandle = getattr( channelbagSlot, 'handle', None )
+                    if channelbagSlotHandle != actionSlotHandle:
+                        continue
+
+                channelbagFCurves = getattr( eachChannelbag, 'fcurves', None )
+                if channelbagFCurves != None:
+                    matchingFCurves.extend( channelbagFCurves )
+
+    return matchingFCurves
 
 #####################################
 def InLodCollections( nodeObject ):
@@ -1971,7 +2037,7 @@ def CreateAnimationNode( nodeObject ):
     animationNode.Label = nodeObject.name
     if nodeObject.animation_data != None:
         if nodeObject.animation_data.action != None:
-            fcurves = nodeObject.animation_data.action.fcurves
+            fcurves = GetActionFCurves( nodeObject.animation_data.action, nodeObject )
             processedDataPaths = set()
             iFC = 0
             while iFC < len( fcurves ):
