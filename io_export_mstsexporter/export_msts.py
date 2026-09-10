@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (5, 2, 1),
+                "version": (5, 2, 2),
                 "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -31,6 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2026-09-10      Released V5.2.2  - pkw - Added SNAP object-name keyword to retain export hierarchy without using animation keywords
 2026-08-02      Released V5.2.1  - pkw - Blender 5.2 Action slot/f-curve compatibility and export cancel callback fix
 2026-07-15      Released V5.2  - pkw - Blender 5.2 LTS compatibility verification.
 2026-05-26      Released V5.0  - pkw - Version 5.x Compatibility - shader node update fixed for 5
@@ -1224,7 +1225,8 @@ def ConstructMatrix( ancestor, object ):
 #####################################
 def IsMSTSDefinedName( name ):
 
-    # if it is one of the automatically animated or OpenRails-controlled parts
+    # if it is one of the automatically animated, OpenRails-controlled, or
+    # explicitly retained utility parts
     mstsName = MSTSName( name)
     mstsNameUpper = mstsName.upper()
 
@@ -1237,6 +1239,7 @@ def IsMSTSDefinedName( name ):
         'WIPER',
         'DOOR_A','DOOR_B','DOOR_C','DOOR_D','DOOR_E','DOOR_F',
         'MIRROR',
+        'SNAP',
         'LEFTWINDOWFRONT','RIGHTWINDOWFRONT','LEFTWINDOWREAR','RIGHTWINDOWREAR',
         'UNLOADINGPARTS',
         'ORTSBELL',

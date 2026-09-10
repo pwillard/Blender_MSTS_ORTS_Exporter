@@ -1,5 +1,9 @@
 # README
 
+September 10, 2026
+
+Release 5.2.2 - Adds SNAP as an object-name keyword that preserves export hierarchy without reusing animation-oriented names such as MIRROR or WIPER.
+
 August 2, 2026
 
 Release 5.2.1 - Fixes Blender 5.2 Action/f-curve export handling for animated ENGINE objects and prevents the cancel callback from reporting a Context object as an error message.
