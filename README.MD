@@ -37,6 +37,13 @@ Repackage for easier installation in Blender.  **Use the Releases link on the ri
 The ADD-ON is packaged and made available under the *Releases* section of this repository.
 The Documentation ane examples are packaged a separate Zip file.
 
+Run `python package_release.py` from the repository root to create both GitHub release ZIP files in `dist/`:
+
+- `MSTS_ORTS_Exporter_AddOn_vX.Y.Z.zip`
+- `MSTS_ORTS_Exporter_Documentation_vX.Y.Z.zip`
+
+The script reads the version from the exporter add-on and writes `SHA256SUMS.txt` beside the ZIP files.
+
 This has been done to make the installation cleaner and easier. The Add-On code no longer needs to be extracted if you just want the documentation, and only the add-on code gets installed into the Blender environment.  This eliminates some extra steps. 
 
 Release 4.8.0

@@ -1,4 +1,3 @@
 *.zip
 dist/
-/package_release.py
 tests/
