@@ -31,12 +31,11 @@ class PackageError(RuntimeError):
     pass
 
 
-def read_exporter_version() -> str:
-    exporter_path = ADDON_DIR / "export_msts.py"
+def read_bl_info_version(source_path: Path) -> tuple[int, ...]:
     try:
-        module_ast = ast.parse(exporter_path.read_text(encoding="utf-8"))
+        module_ast = ast.parse(source_path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise PackageError(f"Unable to read {exporter_path}: {exc}") from exc
+        raise PackageError(f"Unable to read {source_path}: {exc}") from exc
 
     for node in module_ast.body:
         if isinstance(node, ast.Assign):
@@ -45,10 +44,24 @@ def read_exporter_version() -> str:
                     bl_info = ast.literal_eval(node.value)
                     version = bl_info.get("version")
                     if not isinstance(version, tuple):
-                        raise PackageError("bl_info['version'] is not a tuple")
-                    return ".".join(str(part) for part in version)
+                        raise PackageError(f"bl_info['version'] is not a tuple in {source_path}")
+                    return version
 
-    raise PackageError(f"Could not find bl_info version in {exporter_path}")
+    raise PackageError(f"Could not find bl_info version in {source_path}")
+
+
+def read_exporter_version() -> str:
+    init_path = ADDON_DIR / "__init__.py"
+    exporter_path = ADDON_DIR / "export_msts.py"
+    init_version = read_bl_info_version(init_path)
+    exporter_version = read_bl_info_version(exporter_path)
+    if init_version != exporter_version:
+        raise PackageError(
+            "Version mismatch: "
+            f"{init_path} has {init_version}, "
+            f"{exporter_path} has {exporter_version}"
+        )
+    return ".".join(str(part) for part in exporter_version)
 
 
 def iter_files(base_dir: Path):
