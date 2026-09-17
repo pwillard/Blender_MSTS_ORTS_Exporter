@@ -1,5 +1,9 @@
 # README
 
+September 10, 2026
+
+Release 5.2.3 - Adds an optional Copy Textures export setting that copies referenced ACE/DDS files beside the exported S file when matching files are available. It does not convert image formats.
+
 August 2, 2026
 
 Release 5.2.1 - Fixes Blender 5.2 Action/f-curve export handling for animated ENGINE objects and prevents the cancel callback from reporting a Context object as an error message.

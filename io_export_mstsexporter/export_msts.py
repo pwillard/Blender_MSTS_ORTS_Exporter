@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (5, 2, 2),
+                "version": (5, 2, 3),
                 "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -31,6 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2026-09-10      Released V5.2.3  - pkw - Added optional copy of referenced ACE/DDS textures beside exported S files
 2026-09-10      Released V5.2.2  - pkw - Added SNAP object-name keyword to retain export hierarchy without using animation keywords
 2026-08-02      Released V5.2.1  - pkw - Blender 5.2 Action slot/f-curve compatibility and export cancel callback fix
 2026-07-15      Released V5.2  - pkw - Blender 5.2 LTS compatibility verification.
@@ -111,8 +112,10 @@ IDEAS FUTURE
 '''
 
 import bpy
+import filecmp
 import os
 import re
+import shutil
 from math import radians
 from bpy.props import StringProperty, EnumProperty, BoolProperty
 import mathutils
@@ -137,6 +140,7 @@ RetainNames = False   # user option, when true, the exporter disables mesh
                       # consolidation and hierarchy collapse optimizations
                       # reduces frame rates due to more Draw Calls
 UseDDS = False
+CopyTextures = False
 
 BlenderVersion = bpy.app.version    # returns tuple of (major, minor, subversion)
 
@@ -237,6 +241,7 @@ class MSTSExporter(bpy.types.Operator, ExportHelper):
         layout.prop( self, "filepath" )
         layout.prop( settings, "RetainNames" )
         layout.prop( settings, "UseDDS" )
+        layout.prop( settings, "CopyTextures" )
 
     def execute(self, context):
 
@@ -246,6 +251,8 @@ class MSTSExporter(bpy.types.Operator, ExportHelper):
         RetainNames = settings.RetainNames
         global UseDDS
         UseDDS = settings.UseDDS
+        global CopyTextures
+        CopyTextures = settings.CopyTextures
 
         #Append .s
         exportPath = bpy.path.ensure_ext(self.filepath, ".s")
@@ -782,6 +789,8 @@ class msts_scene_props(bpy.types.PropertyGroup):
 
     UseDDS : BoolProperty(name='Use DDS', description = 'Export Texture type as DDS instead of ACE', default = False )
 
+    CopyTextures : BoolProperty(name='Copy Textures', description = 'Copy referenced ACE/DDS texture files beside the exported S file when available', default = False )
+
 '''
 This code converts from Blender data structures to MSTS data structures
 from here down to the Library section, the code uses blender coordinate system unless specified as MSTS
@@ -864,10 +873,7 @@ def iImageAdd( imageName ):
 
     if imageName==None or imageName == '':
         imageName = 'blank'
-    if UseDDS==False:
-        imageName = imageName + '.ace'
-    else:
-        imageName = imageName + '.dds'
+    imageName = ExportImageFileName( imageName )
 
     for iImage in range(0, len( ExportShape.Images)):
         if ExportShape.Images[iImage] == imageName:
@@ -876,6 +882,17 @@ def iImageAdd( imageName ):
     iImage = len( ExportShape.Images)
     ExportShape.Images.append( imageName)
     return iImage
+
+
+#####################################
+def ExportImageFileName( imageName ):
+
+    if imageName == None or imageName == '':
+        return 'blank'
+    if UseDDS == False:
+        return imageName + '.ace'
+    else:
+        return imageName + '.dds'
 
 
 #####################################
@@ -1000,25 +1017,139 @@ def IsLinkedToBaseColor( imageNode ):
     return False
 
 #####################################
-# return an msts format image name, eg unionstop.ace
-def BaseColorImageFrom( material ):
+# return a source image stem and source path, eg ('unionstop', '//textures/unionstop.tga')
+def BaseColorImageDetailsFrom( material ):
 
     if material == None:
-        return None
+        return ( None, None )
 
     # if we specified a filepath in MSTS Material panel, use it
     if material.msts.BaseColorFilepath != '':
-        return GetFileNameNoExtension( material.msts.BaseColorFilepath )
+        return ( GetFileNameNoExtension( material.msts.BaseColorFilepath ), material.msts.BaseColorFilepath )
 
     # Otherwise, look for an image in the shader node tree linked to a Color or Base Color input
     if material.node_tree != None:
         for eachNode in material.node_tree.nodes:
             if eachNode.bl_idname == 'ShaderNodeTexImage':
-                if eachNode.image.source == 'FILE':
+                if eachNode.image != None and eachNode.image.source == 'FILE':
                     if IsLinkedToBaseColor( eachNode ):
-                        return GetFileNameNoExtension( eachNode.image.filepath )
+                        return ( GetFileNameNoExtension( eachNode.image.filepath ), eachNode.image.filepath )
 
+    return ( None, None )
+
+
+#####################################
+# return an msts/open rails image stem, eg unionstop
+def BaseColorImageFrom( material ):
+
+    imageName, sourcePath = BaseColorImageDetailsFrom( material )
+    return imageName
+
+
+#####################################
+def RegisterTextureCopyCandidate( imageName, sourcePath ):
+
+    if imageName == None or imageName == '' or imageName == 'blank':
+        return
+    if sourcePath == None or sourcePath == '':
+        return
+
+    exportedImageName = ExportImageFileName( imageName )
+    ExportTextureSources.setdefault( exportedImageName, sourcePath )
+
+
+#####################################
+def TextureCopyCandidates( exportedImageName, sourcePath ):
+
+    candidates = []
+    requiredExtension = os.path.splitext( exportedImageName )[1]
+    sourceAbsPath = bpy.path.abspath( sourcePath )
+
+    if sourceAbsPath != '':
+        candidates.append( sourceAbsPath )
+        sourceRoot, sourceExtension = os.path.splitext( sourceAbsPath )
+        if sourceExtension.lower() != requiredExtension.lower():
+            candidates.append( sourceRoot + requiredExtension )
+        sourceFolder = os.path.dirname( sourceAbsPath )
+        if sourceFolder != '':
+            candidates.append( os.path.join( sourceFolder, exportedImageName ) )
+
+    blendFilePath = getattr( bpy.data, 'filepath', '' )
+    if blendFilePath != '':
+        blendFolder = os.path.dirname( bpy.path.abspath( blendFilePath ) )
+        candidates.append( os.path.join( blendFolder, exportedImageName ) )
+        candidates.append( os.path.join( blendFolder, 'textures', exportedImageName ) )
+
+    uniqueCandidates = []
+    seen = set()
+    for eachCandidate in candidates:
+        normalized = os.path.normcase( os.path.abspath( eachCandidate ) )
+        if normalized not in seen:
+            seen.add( normalized )
+            uniqueCandidates.append( eachCandidate )
+    return uniqueCandidates
+
+
+#####################################
+def FindTextureCopySource( exportedImageName, sourcePath ):
+
+    requiredExtension = os.path.splitext( exportedImageName )[1]
+    for eachCandidate in TextureCopyCandidates( exportedImageName, sourcePath ):
+        if os.path.isfile( eachCandidate ):
+            if os.path.splitext( eachCandidate )[1].lower() == requiredExtension.lower():
+                return eachCandidate
     return None
+
+
+#####################################
+def CopyReferencedTextures( MSTSFilePath ):
+
+    if not CopyTextures:
+        return
+
+    exportFolder = os.path.dirname( os.path.abspath( MSTSFilePath ) )
+    if exportFolder == '':
+        exportFolder = os.getcwd()
+
+    copiedCount = 0
+    skippedCount = 0
+    missingCount = 0
+    conflictCount = 0
+
+    print()
+    print( "TEXTURES:" )
+
+    for exportedImageName in sorted( ExportTextureSources.keys() ):
+        sourcePath = ExportTextureSources[exportedImageName]
+        sourceFile = FindTextureCopySource( exportedImageName, sourcePath )
+        destinationFile = os.path.join( exportFolder, exportedImageName )
+
+        if sourceFile == None:
+            missingCount += 1
+            print( "   MISSING", exportedImageName, "from", sourcePath )
+            continue
+
+        if os.path.exists( destinationFile ):
+            try:
+                if os.path.samefile( sourceFile, destinationFile ):
+                    skippedCount += 1
+                    print( "   SKIP", exportedImageName, "already in export folder" )
+                    continue
+            except OSError:
+                pass
+            if filecmp.cmp( sourceFile, destinationFile, shallow = False ):
+                skippedCount += 1
+                print( "   SKIP", exportedImageName, "already exists" )
+            else:
+                conflictCount += 1
+                print( "   WARNING", exportedImageName, "already exists and is different; not overwritten" )
+            continue
+
+        shutil.copy2( sourceFile, destinationFile )
+        copiedCount += 1
+        print( "   COPY", sourceFile, "->", destinationFile )
+
+    print( "   Copied", copiedCount, "Skipped", skippedCount, "Missing", missingCount, "Conflicts", conflictCount )
 
 
 #####################################
@@ -1617,7 +1748,8 @@ def GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, nor
 
 
     # find image used by material
-    imageName = BaseColorImageFrom( blMaterial ) # may return None
+    imageName, imageSourcePath = BaseColorImageDetailsFrom( blMaterial ) # imageName may return None
+    RegisterTextureCopyCandidate( imageName, imageSourcePath )
     mipMapLODBias = blMaterial.msts.MipMapLODBias
     mstsMaterial.iTextures.append( iTextureAdd( imageName, mipMapLODBias ) )
     textureAddressMode = 1 # repeat
@@ -2116,6 +2248,9 @@ def ExportShapeFile( collectionName, MSTSFilePath ):
     LastiMatrix = -1
     LastiPrimState = 0
 
+    global ExportTextureSources
+    ExportTextureSources = {}
+
     # For now, support a single LOD control
     lodControl = LodControl( ExportShape )
     ExportShape.LodControls.append( lodControl )
@@ -2193,6 +2328,7 @@ def ExportShapeFile( collectionName, MSTSFilePath ):
     CompactSubObjects()
 
     ExportShape.Write( MSTSFilePath )
+    CopyReferencedTextures( MSTSFilePath )
 
     # Reporting
     print ( )

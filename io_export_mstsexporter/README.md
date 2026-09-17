@@ -2,6 +2,10 @@
 
 September 10, 2026
 
+Release 5.2.3 - Adds an optional Copy Textures export setting that copies referenced ACE/DDS files beside the exported S file when matching files are available. It does not convert image formats.
+
+September 10, 2026
+
 Release 5.2.2 - Adds SNAP as an object-name keyword that preserves export hierarchy without reusing animation-oriented names such as MIRROR or WIPER.
 
 August 2, 2026
