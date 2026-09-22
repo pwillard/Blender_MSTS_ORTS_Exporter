@@ -1,5 +1,13 @@
 # README
 
+September 18, 2026
+
+Release 5.2.5 - Adds a Write Export Info option that writes OpenRails/MSTS bounding box and export summary sidecar files beside the exported S file.
+
+September 10, 2026
+
+Release 5.2.4 - Copy Textures now prefers a matching ACE/DDS file for the material base name, then falls back to copying the actual source texture used in Blender when no matching runtime texture exists.
+
 September 10, 2026
 
 Release 5.2.3 - Adds an optional Copy Textures export setting that copies referenced ACE/DDS files beside the exported S file when matching files are available. It does not convert image formats.

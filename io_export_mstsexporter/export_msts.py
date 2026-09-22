@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (5, 2, 3),
+                "version": (5, 2, 5),
                 "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -31,6 +31,8 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2026-09-18      Released V5.2.5  - pkw - Added OpenRails/MSTS export info sidecar reports
+2026-09-10      Released V5.2.4  - pkw - Copy source texture file when no matching ACE/DDS texture exists
 2026-09-10      Released V5.2.3  - pkw - Added optional copy of referenced ACE/DDS textures beside exported S files
 2026-09-10      Released V5.2.2  - pkw - Added SNAP object-name keyword to retain export hierarchy without using animation keywords
 2026-08-02      Released V5.2.1  - pkw - Blender 5.2 Action slot/f-curve compatibility and export cancel callback fix
@@ -113,6 +115,7 @@ IDEAS FUTURE
 
 import bpy
 import filecmp
+import json
 import os
 import re
 import shutil
@@ -141,6 +144,7 @@ RetainNames = False   # user option, when true, the exporter disables mesh
                       # reduces frame rates due to more Draw Calls
 UseDDS = False
 CopyTextures = False
+WriteExportInfo = True
 
 BlenderVersion = bpy.app.version    # returns tuple of (major, minor, subversion)
 
@@ -242,6 +246,7 @@ class MSTSExporter(bpy.types.Operator, ExportHelper):
         layout.prop( settings, "RetainNames" )
         layout.prop( settings, "UseDDS" )
         layout.prop( settings, "CopyTextures" )
+        layout.prop( settings, "WriteExportInfo" )
 
     def execute(self, context):
 
@@ -253,6 +258,8 @@ class MSTSExporter(bpy.types.Operator, ExportHelper):
         UseDDS = settings.UseDDS
         global CopyTextures
         CopyTextures = settings.CopyTextures
+        global WriteExportInfo
+        WriteExportInfo = settings.WriteExportInfo
 
         #Append .s
         exportPath = bpy.path.ensure_ext(self.filepath, ".s")
@@ -791,6 +798,8 @@ class msts_scene_props(bpy.types.PropertyGroup):
 
     CopyTextures : BoolProperty(name='Copy Textures', description = 'Copy referenced ACE/DDS texture files beside the exported S file when available', default = False )
 
+    WriteExportInfo : BoolProperty(name='Write Export Info', description = 'Write OpenRails/MSTS bounding box and export summary sidecar files beside the exported S file', default = True )
+
 '''
 This code converts from Blender data structures to MSTS data structures
 from here down to the Library section, the code uses blender coordinate system unless specified as MSTS
@@ -1097,8 +1106,13 @@ def FindTextureCopySource( exportedImageName, sourcePath ):
     for eachCandidate in TextureCopyCandidates( exportedImageName, sourcePath ):
         if os.path.isfile( eachCandidate ):
             if os.path.splitext( eachCandidate )[1].lower() == requiredExtension.lower():
-                return eachCandidate
-    return None
+                return ( eachCandidate, exportedImageName )
+
+    sourceAbsPath = bpy.path.abspath( sourcePath )
+    if sourceAbsPath != '' and os.path.isfile( sourceAbsPath ):
+        return ( sourceAbsPath, os.path.basename( sourceAbsPath ) )
+
+    return ( None, exportedImageName )
 
 
 #####################################
@@ -1121,12 +1135,12 @@ def CopyReferencedTextures( MSTSFilePath ):
 
     for exportedImageName in sorted( ExportTextureSources.keys() ):
         sourcePath = ExportTextureSources[exportedImageName]
-        sourceFile = FindTextureCopySource( exportedImageName, sourcePath )
-        destinationFile = os.path.join( exportFolder, exportedImageName )
+        sourceFile, destinationName = FindTextureCopySource( exportedImageName, sourcePath )
+        destinationFile = os.path.join( exportFolder, destinationName )
 
         if sourceFile == None:
             missingCount += 1
-            print( "   MISSING", exportedImageName, "from", sourcePath )
+            print( "   MISSING", exportedImageName, "or source texture from", sourcePath )
             continue
 
         if os.path.exists( destinationFile ):
@@ -1150,6 +1164,143 @@ def CopyReferencedTextures( MSTSFilePath ):
         print( "   COPY", sourceFile, "->", destinationFile )
 
     print( "   Copied", copiedCount, "Skipped", skippedCount, "Missing", missingCount, "Conflicts", conflictCount )
+
+
+#####################################
+def MSTSVectorFromBlender( vector ):
+
+    return ( vector.x, vector.z, vector.y )
+
+
+#####################################
+def ExportBoundsInfo( ):
+
+    minX = LowerBound.x
+    maxX = UpperBound.x
+    minY = LowerBound.z
+    maxY = UpperBound.z
+    minZ = LowerBound.y
+    maxZ = UpperBound.y
+
+    return {
+        "min_x": minX,
+        "max_x": maxX,
+        "min_y": minY,
+        "max_y": maxY,
+        "min_z": minZ,
+        "max_z": maxZ,
+        "width": maxX - minX,
+        "height": maxY - minY,
+        "length": maxZ - minZ,
+    }
+
+
+#####################################
+def ExportLodSummaries( ):
+
+    lodSummaries = []
+    for lodControl in ExportShape.LodControls:
+        for distanceLevel in lodControl.DistanceLevels:
+            triangleCount = 0
+            primitiveCount = 0
+            for eachSubObject in distanceLevel.SubObjects:
+                for primitive in eachSubObject.Primitives:
+                    if len( primitive.Triangles ) > 0:
+                        primitiveCount += 1
+                        triangleCount += len( primitive.Triangles )
+            lodSummaries.append( {
+                "selection": distanceLevel.Selection,
+                "triangles": triangleCount,
+                "draw_calls": primitiveCount,
+            } )
+    return lodSummaries
+
+
+#####################################
+def FormatMeters( value ):
+
+    return ( f"{value:.6f}" ).rstrip( '0' ).rstrip( '.' )
+
+
+#####################################
+def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
+
+    if not WriteExportInfo:
+        return
+
+    basePath = os.path.splitext( MSTSFilePath )[0]
+    jsonPath = basePath + '_export_info.json'
+    textPath = basePath + '_export_info.txt'
+    bounds = ExportBoundsInfo()
+    lodSummaries = ExportLodSummaries()
+
+    exportInfo = {
+        "schema": "msts_orts_export_info",
+        "schema_version": 1,
+        "shape_file": os.path.basename( MSTSFilePath ),
+        "units": "meters",
+        "coordinate_system": "OpenRails/MSTS",
+        "axis_mapping": {
+            "x": "width/right",
+            "y": "height/up",
+            "z": "length/forward",
+            "source_blender_to_openrails": "(x, z, y)",
+        },
+        "bounds": bounds,
+        "volume_sphere": {
+            "center_x": volumeSphere.Vector[0],
+            "center_y": volumeSphere.Vector[1],
+            "center_z": volumeSphere.Vector[2],
+            "radius": volumeSphere.Radius,
+            "radius_includes_safety_margin": True,
+        },
+        "images": list( ExportShape.Images ),
+        "lods": lodSummaries,
+    }
+
+    with open( jsonPath, 'w', encoding='utf-8' ) as jsonFile:
+        json.dump( exportInfo, jsonFile, indent=2 )
+        jsonFile.write( '\n' )
+
+    lines = [
+        "Full Bounding Box Info",
+        "",
+        "Coordinate System: OpenRails/MSTS",
+        "Units: meters",
+        "",
+        "Width " + FormatMeters( bounds["width"] ) + "m",
+        "Height " + FormatMeters( bounds["height"] ) + "m",
+        "Length " + FormatMeters( bounds["length"] ) + "m",
+        "",
+        "Min X: " + FormatMeters( bounds["min_x"] ),
+        "Max X: " + FormatMeters( bounds["max_x"] ),
+        "Min Y: " + FormatMeters( bounds["min_y"] ),
+        "Max Y: " + FormatMeters( bounds["max_y"] ),
+        "Min Z: " + FormatMeters( bounds["min_z"] ),
+        "Max Z: " + FormatMeters( bounds["max_z"] ),
+        "",
+        "Volume Sphere:",
+        "Center X: " + FormatMeters( volumeSphere.Vector[0] ),
+        "Center Y: " + FormatMeters( volumeSphere.Vector[1] ),
+        "Center Z: " + FormatMeters( volumeSphere.Vector[2] ),
+        "Radius: " + FormatMeters( volumeSphere.Radius ),
+        "Radius Includes Safety Margin: yes",
+        "",
+        "LODs:",
+    ]
+    for lodSummary in lodSummaries:
+        lines.append( "LOD " + str( lodSummary["selection"] ) + ": Triangles " + str( lodSummary["triangles"] ) + ", Draw Calls " + str( lodSummary["draw_calls"] ) )
+    lines.extend( [ "", "Images:" ] )
+    for eachImage in ExportShape.Images:
+        lines.append( eachImage )
+
+    with open( textPath, 'w', encoding='utf-8', newline='\n' ) as textFile:
+        textFile.write( '\n'.join( lines ) )
+        textFile.write( '\n' )
+
+    print( "EXPORT INFO:" )
+    print( "   ", jsonPath )
+    print( "   ", textPath )
 
 
 #####################################
@@ -2315,7 +2466,7 @@ def ExportShapeFile( collectionName, MSTSFilePath ):
     # center = FindCenter( rootObject )  OR doesn't display properly with a computed center,
     center = rootObject.matrix_world.translation
     radius = FindBoundingRadius( center )
-    MSTSvector = ( center.x, center.z, center.y )
+    MSTSvector = MSTSVectorFromBlender( center )
     volumeSphere.Vector = MSTSvector
     volumeSphere.Radius = radius * 1.1  # add some safety margin
     ExportShape.Volumes.append( volumeSphere )
@@ -2329,6 +2480,7 @@ def ExportShapeFile( collectionName, MSTSFilePath ):
 
     ExportShape.Write( MSTSFilePath )
     CopyReferencedTextures( MSTSFilePath )
+    WriteExportInfoFiles( MSTSFilePath, volumeSphere )
 
     # Reporting
     print ( )

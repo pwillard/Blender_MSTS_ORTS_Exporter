@@ -1,5 +1,13 @@
 # README
 
+September 18, 2026
+
+Release 5.2.5 - Adds a Write Export Info option that writes OpenRails/MSTS bounding box and export summary sidecar files beside the exported S file.
+
+September 10, 2026
+
+Release 5.2.4 - Copy Textures now prefers a matching ACE/DDS file for the material base name, then falls back to copying the actual source texture used in Blender when no matching runtime texture exists.
+
 September 10, 2026
 
 Release 5.2.3 - Adds an optional Copy Textures export setting that copies referenced ACE/DDS files beside the exported S file when matching files are available. It does not convert image formats. (baby steps)
@@ -47,6 +55,8 @@ Run `python package_release.py` from the repository root to create both GitHub r
 - `MSTS_ORTS_Exporter_Documentation_vX.Y.Z.zip`
 
 The script reads the version from the exporter add-on and writes `SHA256SUMS.txt` beside the ZIP files.
+
+See `DEVELOPMENT_NOTES.md` for maintenance notes, release/version checklist items, packaging behavior, and recent exporter implementation decisions.
 
 This has been done to make the installation cleaner and easier. The Add-On code no longer needs to be extracted if you just want the documentation, and only the add-on code gets installed into the Blender environment.  This eliminates some extra steps. 
 
