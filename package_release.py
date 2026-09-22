@@ -3,7 +3,7 @@
 
 Creates two separate archives:
 - Blender-installable add-on ZIP containing io_export_mstsexporter/
-- Documentation ZIP containing MstsExporterDocumentation/ plus top-level docs
+- Documentation ZIP containing Documentation/ plus top-level docs
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parent
 ADDON_DIR = ROOT / "io_export_mstsexporter"
-DOCS_DIR = ROOT / "MstsExporterDocumentation"
+DOCS_DIR = ROOT / "Documentation"
 DEFAULT_OUTPUT_DIR = ROOT / "dist"
 ADDON_PREFIX = "io_export_mstsexporter"
-DOCS_PREFIX = "MstsExporterDocumentation"
+DOCS_PREFIX = "Documentation"
 EXCLUDED_DIR_NAMES = {"__pycache__", ".git", ".pytest_cache"}
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 

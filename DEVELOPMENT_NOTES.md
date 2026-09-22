@@ -27,7 +27,7 @@ This creates GitHub release artifacts in `dist/`:
 - `MSTS_ORTS_Exporter_Documentation_vX.Y.Z.zip`
 - `SHA256SUMS.txt`
 
-The add-on ZIP is Blender-installable and contains `io_export_mstsexporter/`. The documentation ZIP contains `MstsExporterDocumentation/` plus top-level project docs.
+The add-on ZIP is Blender-installable and contains `io_export_mstsexporter/`. The documentation ZIP contains `Documentation/` plus top-level project docs.
 
 `dist/` is ignored by git. Do not commit generated ZIP files unless the release process explicitly changes.
 
