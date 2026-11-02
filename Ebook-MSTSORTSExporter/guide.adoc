@@ -13,7 +13,7 @@ The current add-on ZIP from the GitHub Releases page can be installed directly f
 
 * Choose the down-arrow in the upper right for the "Install from File" option
 
-* Select the Exporter Add-On ZIP file, for example `MSTS_ORTS_Exporter_AddOn_v5.2.6.zip`.
+* Select the Exporter Add-On ZIP file, for example `MSTS_ORTS_Exporter_AddOn_v5.3.0.zip`.
 
 * Enable OpenRails/MSTS Shape Exporter ( Enable the CHECK mark, if not selected) .
 
@@ -163,6 +163,9 @@ image::images/image5.png[]
 |MipMapLODBias| Controls sharpness of the applied textures. (1)
 |BaseColorFilepath| Select the texture image ( usually a .tga, .bmp, or .png file ) to apply to the model.
 |Legacy Update Shader| Compatibility setting for older files. For current Blender versions, use the buttons below the material settings when you want to update Blender material display settings or rebuild the simple MSTS shader node setup. (2)
+|Shading| *Classic (MSTS + Open Rails)* is the normal setting and works everywhere. *PBR (Open Rails only)* gives the material base color, ORM and normal textures. See <<PBR Materials (Open Rails Only)>>.
+|ORM Texture| PBR only. Optional texture with ambient occlusion in red, roughness in green and metallic in blue. Leave blank to use the image connected to Roughness/Metallic in the shader nodes.
+|Normal Texture| PBR only. Optional normal map. Leave blank to use the image connected to a Normal Map node in the shader nodes.
 |===
 
 _(1) Values range from -8 to +8. Negative values sharpen the image, but can cause excessive moire patterns. Positive values result in texturing blurring, and less moire._
@@ -192,7 +195,7 @@ image::images/image7.png[]
 in the shape file for users wanting better compatibility with external utilities such as Polymaster.
 * USE DDS - This option, when checked, will export the .s file with textures referenced as DDS files instead of ACE
 * COPY TEXTURES - This option copies texture files beside the exported .s file. If an ACE or DDS file matching the material base name exists, that runtime texture is copied. If no matching ACE/DDS file exists, the source texture used in Blender, such as BMP, TGA, or PNG, is copied instead. The exporter does not convert image formats.
-* WRITE EXPORT INFO - This option writes `<shape>_export_info.json` and `<shape>_export_info.txt` beside the exported .s file. These sidecar files report the Open Rails/MSTS bounding box, volume sphere, exported image list, LOD triangle/draw-call summary, running gear (axles, bogies, wheel radius, wheelbase), and coupler marker measurements. See <<Export Info For Rolling Stock>>.
+* WRITE EXPORT INFO - This option writes `<shape>_export_info.json` and `<shape>_export_info.txt` beside the exported .s file. These sidecar files report the Open Rails/MSTS bounding box, volume sphere (JSON only), exported image list, LOD triangle/draw-call summary, running gear (axles, bogies, wheel radius, wheelbase), and coupler marker measurements. See <<Export Info For Rolling Stock>>.
 * Initiate the file export.
 * Results will appear on the status panel at the bottom of the screen.
 
@@ -436,6 +439,29 @@ Tools that build Open Rails `.eng` and `.wag` files can read the running gear an
 * From the two markers the report gives the coupler face length (the value Open Rails uses for car spacing), the coupler height, and the centre offset.
 
 The report adds warnings when, for example, a bogie has no wheels, the model is not centred between the coupler faces, the front and rear coupler heights differ, the markers appear swapped, or a marker is a mesh instead of an Empty. Warnings are informational; the export still completes.
+
+=== PBR Materials (Open Rails Only)
+
+[WARNING]
+PBR materials are for *Open Rails only*. MSTS does not know the PBR shaders, so a shape with even one PBR material should not be used in MSTS. Leave *Shading* on *Classic* for anything that must work in MSTS.
+
+PBR (physically based rendering) materials look more like real metal, paint and glass. To use one:
+
+. Select the material and, in the MSTS/ORTS Materials panel, set *Shading* to *PBR (Open Rails only)*.
+. Set the base color texture as usual (*BaseColorFilepath* or an image connected to Base Color).
+. Optionally add an *ORM Texture* (red = ambient occlusion, green = roughness, blue = metallic, the same layout glTF uses) and a *Normal Texture*. You can pick the files in the panel, or connect the images in the shader nodes the usual way: ORM through a Separate Color node into Roughness and Metallic, the normal map through a Normal Map node into Normal. `Rebuild MSTS Shader Nodes` builds that node setup for you from the panel file paths.
+. Turn on *Use DDS* in the export panel. ORM and normal maps lose too much quality as ACE files.
+
+What the exporter writes:
+
+* The shader `PbrTexDiff` (Solid Opaque and Transparency On/Off) or `BlendAPbrTexDiff` (Alpha Blended and Alpha Sorted).
+* Up to three textures per material: base color, ORM, normal.
+* A small `<shape>.s.tsre.json` file beside the .s file with the material numbers that the .s format has no room for: the base color, metallic, roughness, normal strength and emission values from the Principled BSDF node. Keep this file with the shape. Open Rails and MSTS ignore it; viewers that understand PBR read it, and without it they use default values.
+
+The export reports "Open Rails only" in the Blender status bar and in the export info warnings whenever a shape contains PBR materials. Changing all materials back to *Classic* and exporting again removes the PBR values from `<shape>.s.tsre.json` (and deletes the file if nothing else is in it).
+
+[NOTE]
+The `Lighting` setting still sets the MSTS lighting mode of a PBR material, but *Emissive* does not switch to the unlit `Tex` shader as it does for Classic materials. For a glowing PBR surface, use the Emission color and strength in the Principled BSDF node instead.
 
 
 <<<

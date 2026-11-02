@@ -1,5 +1,9 @@
 # README
 
+November 2, 2026
+
+Release 5.3.0 - PBR materials (Open Rails only): a new Shading setting in the MSTS Materials panel. PBR materials export the PbrTexDiff / BlendAPbrTexDiff shaders with base color, ORM and normal textures, and write their factors to `<shape>.s.tsre.json`. MSTS cannot display PBR materials; Classic stays the default and its output is unchanged. MSTS material settings are now read from the original Blender material, so changes made from scripts are no longer missed.
+
 October 15, 2026
 
 Release 5.2.6 - Export info schema 2: counts WHEELS*/BOGIE* running gear (axles, bogies, wheel radius, rigid wheelbase, bogie centres) and reads optional COUPLER_F / COUPLER_R Empty markers for coupler face length, coupler height, and centring checks. Warnings are written to the sidecar files and the console.

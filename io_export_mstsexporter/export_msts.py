@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (5, 2, 6),
+                "version": (5, 3, 0),
                 "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -31,6 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2026-11-02      Released V5.3.0  - pkw - PBR materials ( Open Rails only ): PbrTexDiff/BlendAPbrTexDiff, base/ORM/normal textures, .s.tsre.json factors sidecar
 2026-10-15      Released V5.2.6  - pkw - Export info schema 2: WHEELS/BOGIE running gear, COUPLER_F/R marker empties, warnings
 2026-09-18      Released V5.2.5  - pkw - Added OpenRails/MSTS export info sidecar reports
 2026-09-10      Released V5.2.4  - pkw - Copy source texture file when no matching ACE/DDS texture exists
@@ -146,6 +147,7 @@ RetainNames = False   # user option, when true, the exporter disables mesh
 UseDDS = False
 CopyTextures = False
 WriteExportInfo = True
+ExportPbrMaterials = {}   # PBR ( Open Rails only ) materials in the current export: { name: ( hasOrm, hasNormal ) }
 
 BlenderVersion = bpy.app.version    # returns tuple of (major, minor, subversion)
 
@@ -291,7 +293,10 @@ class MSTSExporter(bpy.types.Operator, ExportHelper):
             ExportShapeFile( rootName, exportPath )
 
             print( "FINISHED OK" )
-            self.report( {'INFO'}, "Finished OK" )
+            if len( ExportPbrMaterials ) > 0:
+                self.report( {'WARNING'}, "Finished OK - Open Rails only: shape uses PBR materials" )
+            else:
+                self.report( {'INFO'}, "Finished OK" )
             return {"FINISHED"}
         except MyException as error:   # when we raise an error it comes here
             context.window_manager.progress_end()
@@ -539,6 +544,43 @@ def RecreateShaderNodes(m):
     if ior_input != None:
         set_socket_default(ior_input, ior_value)
 
+    # --- PBR ( Open Rails only ) ORM and normal textures ---
+    if getattr(m.msts, "Shading", "CLASSIC") == 'PBR':
+
+        def load_pbr_image(filepath, label, location):
+            if not filepath:
+                return None
+            img_path = bpy.path.abspath(filepath)
+            if not os.path.isfile(img_path):
+                return None
+            node = nodes.new("ShaderNodeTexImage")
+            node.label = label
+            node.location = location
+            try:
+                node.image = bpy.data.images.load(img_path, check_existing=True)
+                node.image.colorspace_settings.name = 'Non-Color'
+            except (RuntimeError, TypeError) as error:
+                print(f"Unable to load {label} image '{img_path}' for material '{m.name}': {error}")
+            safe_link(node.inputs.get("Vector"), uv.outputs.get("UV"))
+            return node
+
+        # ORM like glTF: red = occlusion ( not used by Blender ), green = roughness, blue = metallic
+        orm = load_pbr_image(getattr(m.msts, "OrmFilepath", ""), "ORM", (-600, -300))
+        if orm != None:
+            separate = nodes.new("ShaderNodeSeparateColor") if hasattr(bpy.types, "ShaderNodeSeparateColor") else nodes.new("ShaderNodeSeparateRGB")
+            separate.location = (-300, -300)
+            safe_link(first_socket(separate.inputs, ["Color", "Image"]), orm.outputs.get("Color"))
+            safe_link(bsdf.inputs.get("Roughness"), first_socket(separate.outputs, ["Green", "G"]))
+            safe_link(bsdf.inputs.get("Metallic"), first_socket(separate.outputs, ["Blue", "B"]))
+
+        normal = load_pbr_image(getattr(m.msts, "NormalFilepath", ""), "Normal", (-600, -600))
+        if normal != None:
+            normal_map = nodes.new("ShaderNodeNormalMap")
+            normal_map.location = (-300, -600)
+            normal_map.uv_map = 'UVMap'
+            safe_link(normal_map.inputs.get("Color"), normal.outputs.get("Color"))
+            safe_link(bsdf.inputs.get("Normal"), normal_map.outputs.get("Normal"))
+
     # Set active and finalize
     m.node_tree.nodes.active = bsdf
     print(f"Shader updated for '{m.name}' ({bpy.app.version_string})")
@@ -721,6 +763,14 @@ class msts_material_panel(bpy.types.Panel):
             col.prop(mstsmaterial, property="BaseColorFilepath" )
             col.prop(mstsmaterial, property="UpdateNodes" )
             col.separator()
+            col.prop(mstsmaterial, property="Shading" )
+            if mstsmaterial.Shading == 'PBR':
+                col.prop(mstsmaterial, property="OrmFilepath" )
+                col.prop(mstsmaterial, property="NormalFilepath" )
+                box = col.box()
+                box.label( text = "Open Rails only: MSTS cannot display PBR materials", icon = 'ERROR' )
+                box.label( text = "Blank paths use images linked in the shader nodes" )
+            col.separator()
             col.operator("material.msts_apply_material_settings", icon='CHECKMARK')
             col.operator("material.msts_rebuild_shader_nodes", icon='NODETREE')
 
@@ -774,6 +824,28 @@ class msts_material_props(bpy.types.PropertyGroup):
                 name='Legacy Update Shader',
                 description = 'Legacy setting kept for compatibility. Use Rebuild MSTS Shader Nodes to update shader nodes.',
                 default = True ,
+                )
+
+    # PBR materials are an Open Rails only option; Classic is the MSTS compatible default
+    Shading : bpy.props.EnumProperty(
+                name="Shading",
+                description="Choose Classic for MSTS and Open Rails, or PBR for Open Rails only",
+                items = [ ( "CLASSIC", "Classic (MSTS + Open Rails)", "Standard MSTS shaders that work in MSTS and Open Rails" ),
+                          ( "PBR",     "PBR (Open Rails only)",       "Physically based material with base color, ORM and normal textures. MSTS cannot display it" )
+                        ],
+                default="CLASSIC",
+                )
+
+    OrmFilepath : StringProperty(
+                name = 'ORM Texture',
+                description = 'PBR only: texture with ambient Occlusion in red, Roughness in green and Metallic in blue. Blank uses the image linked to Roughness/Metallic in the shader nodes',
+                subtype='FILE_PATH',
+                )
+
+    NormalFilepath : StringProperty(
+                name = 'Normal Texture',
+                description = 'PBR only: tangent space normal map. Blank uses the image linked to a Normal Map node in the shader nodes',
+                subtype='FILE_PATH',
                 )
 
 
@@ -1020,6 +1092,10 @@ def ColorWord( floats ):
 def IsLinkedToBaseColor( imageNode ):
 
     for eachLink in imageNode.outputs['Color'].links:
+        # a Normal Map or Separate Color node's input is also called 'Color'; that image is a
+        # normal map or a packed ORM / channel texture, not the base color
+        if eachLink.to_node.bl_idname in ( 'ShaderNodeNormalMap', 'ShaderNodeSeparateColor', 'ShaderNodeSeparateRGB' ):
+            continue
         if eachLink.to_socket.name == 'Base Color' or \
            eachLink.to_socket.name == 'Color':
                 return True
@@ -1054,6 +1130,228 @@ def BaseColorImageFrom( material ):
 
     imageName, sourcePath = BaseColorImageDetailsFrom( material )
     return imageName
+
+
+#####################################
+# PBR materials ( Open Rails only )
+#
+# An S file PBR primitive state uses the shader PbrTexDiff ( opaque or alpha
+# tested ) or BlendAPbrTexDiff ( alpha blended ) and tex_idxs with up to three
+# entries: base color, ORM ( occlusion red, roughness green, metallic blue,
+# as in glTF ), normal. A missing texture is -1; trailing missing ones are left
+# off. The factors have no place in the S file, so they go in the sidecar
+# <shape>.s.tsre.json, keyed by prim_state name, or by index when the name is
+# not unique. MSTS and Open Rails never read the sidecar.
+#
+# The helpers from PbrShaderName to BuildPbrSidecar are plain Python ( no bpy )
+# so they can be unit tested outside Blender.
+
+PbrShaderNames = { 'OPAQUE': 'PbrTexDiff',
+                   'CLIP': 'PbrTexDiff',
+                   'ALPHA': 'BlendAPbrTexDiff',
+                   'ALPHA_SORT': 'BlendAPbrTexDiff' }
+
+PbrSidecarSuffix = '.tsre.json'
+
+
+#####################################
+def PbrShaderName( transparency ):
+
+    return PbrShaderNames.get( transparency, 'PbrTexDiff' )
+
+
+#####################################
+# iTextures for a PBR prim state: base, ORM, normal; None or -1 = missing
+def PbrTexIdxs( iBase, iOrm, iNormal ):
+
+    iTextures = [ -1 if i == None else i for i in ( iBase, iOrm, iNormal ) ]
+    while len( iTextures ) > 1 and iTextures[-1] == -1:
+        iTextures.pop()
+    return iTextures
+
+
+#####################################
+# primStates = list of ( label, factors ); factors None for classic prim states
+# returns { 'materials': { key: factors } } with only the PBR prim states
+def BuildPbrSidecar( primStates ):
+
+    labelCounts = {}
+    for label, factors in primStates:
+        labelCounts[label] = labelCounts.get( label, 0 ) + 1
+
+    materials = {}
+    for i, ( label, factors ) in enumerate( primStates ):
+        if factors == None:
+            continue
+        key = label if label != '' and labelCounts[label] == 1 else str( i )
+        entry = { "prim_state_index": i, "prim_state_name": label }
+        entry.update( factors )
+        materials[key] = entry
+    return { "materials": materials }
+
+
+#####################################
+def PbrSidecarPath( MSTSFilePath ):
+
+    return MSTSFilePath + PbrSidecarSuffix
+
+
+#####################################
+# pbrMaterials = { material name: ( hasOrm, hasNormal ) }
+def PbrExportWarnings( pbrMaterials, useDDS ):
+
+    warnings = []
+    if len( pbrMaterials ) == 0:
+        return warnings
+    warnings.append( "Open Rails only: PBR material(s) " + ', '.join( sorted( pbrMaterials.keys() ) ) +
+                     " use the PbrTexDiff / BlendAPbrTexDiff shaders; MSTS cannot display this shape correctly" )
+    for name in sorted( pbrMaterials.keys() ):
+        hasOrm, hasNormal = pbrMaterials[name]
+        if not hasOrm and not hasNormal:
+            warnings.append( "PBR material " + name + " has no ORM or normal texture; only the base color and factors are used" )
+    if not useDDS:
+        warnings.append( "PBR textures are referenced as .ace; Use DDS is recommended for ORM and normal maps" )
+    return warnings
+
+
+#####################################
+# merge the PBR materials into an existing sidecar, keeping any other TSRE keys;
+# returns None when nothing should be written ( no PBR and nothing else to keep )
+def MergePbrSidecar( existing, pbrSidecar ):
+
+    merged = dict( existing ) if isinstance( existing, dict ) else {}
+    if len( pbrSidecar["materials"] ) > 0:
+        merged["materials"] = pbrSidecar["materials"]
+    else:
+        merged.pop( "materials", None )
+    if len( merged ) == 0:
+        return None
+    return merged
+
+
+#####################################
+def ImageNodeLinkedSockets( imageNode ):
+    # names of the sockets fed by this image, directly or through a Separate Color / RGB node,
+    # plus the node types the image feeds directly
+
+    socketNames = set()
+    nodeTypes = set()
+    for eachLink in imageNode.outputs['Color'].links:
+        toNode = eachLink.to_node
+        nodeTypes.add( toNode.bl_idname )
+        socketNames.add( eachLink.to_socket.name )
+        if toNode.bl_idname in ( 'ShaderNodeSeparateColor', 'ShaderNodeSeparateRGB' ):
+            for eachOutput in toNode.outputs:
+                for eachSeparateLink in eachOutput.links:
+                    socketNames.add( eachSeparateLink.to_socket.name )
+    return socketNames, nodeTypes
+
+
+#####################################
+# find the image for a PBR slot: the material panel path first, then the shader nodes
+def PbrImageDetailsFrom( material, overridePath, isMatch ):
+
+    if material == None:
+        return ( None, None )
+
+    if overridePath != '':
+        return ( GetFileNameNoExtension( overridePath ), overridePath )
+
+    if material.node_tree != None:
+        for eachNode in material.node_tree.nodes:
+            if eachNode.bl_idname == 'ShaderNodeTexImage':
+                if eachNode.image != None and eachNode.image.source == 'FILE':
+                    socketNames, nodeTypes = ImageNodeLinkedSockets( eachNode )
+                    if isMatch( socketNames, nodeTypes ):
+                        return ( GetFileNameNoExtension( eachNode.image.filepath ), eachNode.image.filepath )
+
+    return ( None, None )
+
+
+#####################################
+def OrmImageDetailsFrom( material ):
+
+    return PbrImageDetailsFrom( material, material.msts.OrmFilepath,
+        lambda sockets, nodeTypes: 'Roughness' in sockets or 'Metallic' in sockets )
+
+
+#####################################
+def NormalImageDetailsFrom( material ):
+
+    return PbrImageDetailsFrom( material, material.msts.NormalFilepath,
+        lambda sockets, nodeTypes: 'ShaderNodeNormalMap' in nodeTypes )
+
+
+#####################################
+def PrincipledBsdfFrom( material ):
+
+    if material == None or material.node_tree == None:
+        return None
+    for eachNode in material.node_tree.nodes:
+        if eachNode.bl_idname == 'ShaderNodeBsdfPrincipled':
+            return eachNode
+    return None
+
+
+#####################################
+# PBR factors ( glTF names ) from the material's Principled BSDF; defaults when there is none.
+# A socket driven by a texture gets factor 1 so the texture value is used as is.
+def PbrFactorsFrom( material, hasOrm ):
+
+    factors = {
+        "base_color_factor": [ 1.0, 1.0, 1.0, 1.0 ],
+        "metallic_factor": 1.0 if hasOrm else 0.0,
+        "roughness_factor": 1.0,
+        "normal_scale": 1.0,
+        "occlusion_strength": 1.0,
+        "emissive_factor": [ 0.0, 0.0, 0.0 ],
+    }
+
+    bsdf = PrincipledBsdfFrom( material )
+    if bsdf == None:
+        return factors
+
+    def socket( names ):
+        for name in names:
+            each = bsdf.inputs.get( name )
+            if each != None:
+                return each
+        return None
+
+    def rounded( value ):
+        return round( float( value ), 6 )
+
+    baseColor = socket( [ 'Base Color' ] )
+    if baseColor != None and not baseColor.is_linked:
+        factors["base_color_factor"][0:3] = [ rounded( c ) for c in baseColor.default_value[0:3] ]
+    alpha = socket( [ 'Alpha' ] )
+    if alpha != None and not alpha.is_linked:
+        factors["base_color_factor"][3] = rounded( alpha.default_value )
+
+    metallic = socket( [ 'Metallic' ] )
+    if metallic != None and not metallic.is_linked:
+        factors["metallic_factor"] = rounded( metallic.default_value )
+    roughness = socket( [ 'Roughness' ] )
+    if roughness != None and not roughness.is_linked:
+        factors["roughness_factor"] = rounded( roughness.default_value )
+
+    normal = socket( [ 'Normal' ] )
+    if normal != None and normal.is_linked:
+        normalNode = normal.links[0].from_node
+        if normalNode.bl_idname == 'ShaderNodeNormalMap':
+            strength = normalNode.inputs.get( 'Strength' )
+            if strength != None and not strength.is_linked:
+                factors["normal_scale"] = rounded( strength.default_value )
+
+    emission = socket( [ 'Emission Color', 'Emission' ] )
+    emissionStrength = socket( [ 'Emission Strength' ] )
+    if emission != None and not emission.is_linked:
+        strength = 1.0
+        if emissionStrength != None and not emissionStrength.is_linked:
+            strength = emissionStrength.default_value
+        factors["emissive_factor"] = [ rounded( c * strength ) for c in emission.default_value[0:3] ]
+
+    return factors
 
 
 #####################################
@@ -1559,6 +1857,42 @@ def FormatMeters( value ):
 
 
 #####################################
+# write <shape>.s.tsre.json with the PBR factors ( Open Rails only materials ).
+# Always runs so a sidecar left from an earlier export or the Shape Viewer can't
+# apply stale factors to renumbered prim states; other TSRE keys are kept.
+def WritePbrSidecar( MSTSFilePath ):
+
+    sidecarPath = PbrSidecarPath( MSTSFilePath )
+    pbrSidecar = BuildPbrSidecar( [ ( ps.Label, ps.PbrFactors ) for ps in ExportShape.PrimStates ] )
+
+    existing = None
+    if os.path.isfile( sidecarPath ):
+        try:
+            with open( sidecarPath, 'r', encoding='utf-8' ) as sidecarFile:
+                existing = json.load( sidecarFile )
+        except ( OSError, ValueError ) as error:
+            print( "    NOTE: existing", sidecarPath, "is not valid JSON and will be replaced:", error )
+
+    merged = MergePbrSidecar( existing, pbrSidecar )
+
+    if len( ExportPbrMaterials ) > 0 or os.path.isfile( sidecarPath ):
+        print()
+        print( "MATERIALS:" )
+    if merged == None:
+        if os.path.isfile( sidecarPath ):
+            os.remove( sidecarPath )
+            print( "    removed stale", sidecarPath, "( no PBR materials )" )
+    else:
+        with open( sidecarPath, 'w', encoding='utf-8', newline='\n' ) as sidecarFile:
+            json.dump( merged, sidecarFile, indent=2 )
+            sidecarFile.write( '\n' )
+        print( "   ", sidecarPath, "(", len( pbrSidecar["materials"] ), "PBR prim states )" )
+
+    for eachWarning in PbrExportWarnings( ExportPbrMaterials, UseDDS ):
+        print( "    NOTE:", eachWarning )
+
+
+#####################################
 def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
 
     if not WriteExportInfo:
@@ -1572,6 +1906,8 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
     runningGearInfo = ExportRunningGearInfo()
     runningGear = runningGearInfo["running_gear"]
     couplers = runningGearInfo["couplers"]
+    # running gear notes plus Open Rails only material notes ( printed by WritePbrSidecar )
+    exportWarnings = runningGearInfo["warnings"] + PbrExportWarnings( ExportPbrMaterials, UseDDS )
 
     exportInfo = {
         "schema": "msts_orts_export_info",
@@ -1599,7 +1935,7 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
         "couplers": couplers,
         "markers": runningGearInfo["markers"],
         "parts": runningGearInfo["parts"],
-        "warnings": runningGearInfo["warnings"],
+        "warnings": exportWarnings,
     }
 
     with open( jsonPath, 'w', encoding='utf-8' ) as jsonFile:
@@ -1622,13 +1958,6 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
         "Max Y: " + FormatMeters( bounds["max_y"] ),
         "Min Z: " + FormatMeters( bounds["min_z"] ),
         "Max Z: " + FormatMeters( bounds["max_z"] ),
-        "",
-        "Volume Sphere:",
-        "Center X: " + FormatMeters( volumeSphere.Vector[0] ),
-        "Center Y: " + FormatMeters( volumeSphere.Vector[1] ),
-        "Center Z: " + FormatMeters( volumeSphere.Vector[2] ),
-        "Radius: " + FormatMeters( volumeSphere.Radius ),
-        "Radius Includes Safety Margin: yes",
         "",
         "LODs:",
     ]
@@ -1665,9 +1994,9 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
     else:
         lines.append( "No COUPLER_F / COUPLER_R markers" )
 
-    if runningGearInfo["warnings"]:
+    if exportWarnings:
         lines.extend( [ "", "Warnings:" ] )
-        for eachWarning in runningGearInfo["warnings"]:
+        for eachWarning in exportWarnings:
             lines.append( "- " + eachWarning )
 
     with open( textPath, 'w', encoding='utf-8', newline='\n' ) as textFile:
@@ -1682,7 +2011,7 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
 
 
 #####################################
-def iPrimStateAdd( iVertexState, zBias, iShader, alphaTestMode, iLightConfig, iTextures ):
+def iPrimStateAdd( iVertexState, zBias, iShader, alphaTestMode, iLightConfig, iTextures, pbrFactors = None ):
 
     global ExportShape
 
@@ -1694,7 +2023,8 @@ def iPrimStateAdd( iVertexState, zBias, iShader, alphaTestMode, iLightConfig, iT
           and eachPrimState.iShader == iShader \
           and eachPrimState.AlphaTestMode == alphaTestMode \
           and eachPrimState.iLightConfig == iLightConfig \
-          and MatchList( eachPrimState.iTextures, iTextures ):
+          and MatchList( eachPrimState.iTextures, iTextures ) \
+          and eachPrimState.PbrFactors == pbrFactors:
                 return i
 
     # we didn't find it so add it
@@ -1713,6 +2043,7 @@ def iPrimStateAdd( iVertexState, zBias, iShader, alphaTestMode, iLightConfig, iT
     newPrimState.iShader = iShader
     newPrimState.AlphaTestMode = alphaTestMode
     newPrimState.iLightConfig = iLightConfig
+    newPrimState.PbrFactors = pbrFactors
     ExportShape.PrimStates.append( newPrimState )
     return i
 
@@ -2231,6 +2562,10 @@ class MSTSMaterialDetail:
 
 def GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, normalOverridesByVertex, iHierarchy, objectName):
 
+    # the evaluated mesh holds depsgraph copies of its materials; their MSTS settings can be stale
+    # until the material is tagged for update ( eg settings changed from a script ), so read the original
+    blMaterial = getattr( blMaterial, 'original', blMaterial )
+
     mstsMaterial = MSTSMaterialDetail()
 
     mstsMaterial.blMaterial = blMaterial
@@ -2299,7 +2634,24 @@ def GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, nor
     else:
         mstsMaterial.alphaTestMode = 0
 
-    if blMaterial.msts.Lighting == "EMISSIVE":
+    # PBR ( Open Rails only ): base color, ORM and normal textures, factors go to the sidecar
+    pbrFactors = None
+    if getattr( blMaterial.msts, 'Shading', 'CLASSIC' ) == 'PBR':
+        mstsMaterial.iShader = iShaderAdd( PbrShaderName( blMaterial.msts.Transparency ) )
+        ormName, ormSourcePath = OrmImageDetailsFrom( blMaterial )
+        normalName, normalSourcePath = NormalImageDetailsFrom( blMaterial )
+        iOrm = None
+        iNormal = None
+        if ormName != None:
+            RegisterTextureCopyCandidate( ormName, ormSourcePath )
+            iOrm = iTextureAdd( ormName, mipMapLODBias )
+        if normalName != None:
+            RegisterTextureCopyCandidate( normalName, normalSourcePath )
+            iNormal = iTextureAdd( normalName, mipMapLODBias )
+        mstsMaterial.iTextures = PbrTexIdxs( mstsMaterial.iTextures[0], iOrm, iNormal )
+        pbrFactors = PbrFactorsFrom( blMaterial, iOrm != None )
+        ExportPbrMaterials[blMaterial.name] = ( ormName != None, normalName != None )
+    elif blMaterial.msts.Lighting == "EMISSIVE":
         if blMaterial.msts.Transparency == 'OPAQUE':
             mstsMaterial.iShader = iShaderAdd( 'Tex' )
         else:
@@ -2314,7 +2666,7 @@ def GetMSTSMaterialDetails( distanceLevel, mesh, blMaterial, normalOverride, nor
     mstsMaterial.iLightConfig = iLightConfigAdd( mstsMaterial.uvops )
     mstsMaterial.iVertexState = iVertexStateAdd( mstsMaterial.vertexFlags, iHierarchy, mstsMaterial.vertexLight, mstsMaterial.iLightConfig )
 
-    mstsMaterial.iPrimState = iPrimStateAdd( mstsMaterial.iVertexState, mstsMaterial.zBias, mstsMaterial.iShader, mstsMaterial.alphaTestMode, mstsMaterial.iLightConfig, mstsMaterial.iTextures )
+    mstsMaterial.iPrimState = iPrimStateAdd( mstsMaterial.iVertexState, mstsMaterial.zBias, mstsMaterial.iShader, mstsMaterial.alphaTestMode, mstsMaterial.iLightConfig, mstsMaterial.iTextures, pbrFactors )
     mstsMaterial.iPrimitive = iPrimitiveAdd( subObject, mstsMaterial.iPrimState )
 
 
@@ -2780,6 +3132,9 @@ def ExportShapeFile( collectionName, MSTSFilePath ):
     global ExportTextureSources
     ExportTextureSources = {}
 
+    global ExportPbrMaterials
+    ExportPbrMaterials = {}
+
     # For now, support a single LOD control
     lodControl = LodControl( ExportShape )
     ExportShape.LodControls.append( lodControl )
@@ -2858,6 +3213,7 @@ def ExportShapeFile( collectionName, MSTSFilePath ):
 
     ExportShape.Write( MSTSFilePath )
     CopyReferencedTextures( MSTSFilePath )
+    WritePbrSidecar( MSTSFilePath )
     WriteExportInfoFiles( MSTSFilePath, volumeSphere )
 
     # Reporting
@@ -3063,6 +3419,7 @@ class PrimState:
         self.AlphaTestMode = 1
         self.iLightConfig = 0
         self.ZBufMode = 1
+        self.PbrFactors = None    # PBR ( Open Rails only ) factors for the .s.tsre.json sidecar; None = classic
 
 
     def Write( self,stf ):

@@ -101,7 +101,7 @@ The report includes:
 
 - bounding box min/max X/Y/Z
 - width, height, and length in meters
-- volume sphere center/radius as written to the shape data
+- volume sphere center/radius as written to the shape data (JSON only; dropped from the .txt in V5.3.0 because the center is always the scene origin)
 - exported image list
 - LOD triangle and draw-call summary
 
@@ -124,16 +124,17 @@ Implementation notes:
 
 Keep the JSON schema stable unless OpenRails Engineer is updated at the same time. Add fields rather than renaming existing ones when possible.
 
-## Planned: PBR materials (Open Rails only)
+## PBR materials (Open Rails only)
 
-Status: design only, not implemented. Driven by the TSRE/Shape Viewer PBR S-material proposal.
+Implemented in V5.3.0, following the TSRE/Shape Viewer PBR S-material proposal (step 3, exporter side). Decision: PBR is an Open Rails only option; Classic stays the default and its output is byte-identical to V5.2.6 (verified on L1, UnionStop and the smoke car, ACE and DDS).
 
-Decision: PBR export is an Open Rails only option. MSTS behavior with the new shader names is unknown, so the classic path stays the default and is unchanged.
-
-- Opt-in per material (e.g. a `Shading` setting: Classic / PBR (Open Rails only)); default Classic.
-- PBR shaders: `PbrTexDiff` (Opaque, Clip) and `BlendAPbrTexDiff` (Alpha, Alpha Sorted). EMISSIVE has no PBR mapping yet; decide before implementing.
-- `tex_idxs` becomes base colour, ORM, normal; a missing slot is `-1`. `PrimState.Write` already writes a variable count.
-- Texture discovery: Base Color image as now; ORM = image feeding Roughness/Metallic via Separate Color (glTF style); normal = image feeding a Normal Map node; plus optional file path overrides like `BaseColorFilepath`.
-- Factors go to the `<shape>.s.tsre.json` sidecar (materials object). Prim state labels (`<matrix>_<texture>`) are not unique, so key by index or make labels unique for PBR shapes. Always rewrite (or delete when no PBR materials) the sidecar on export so a stale Shape Viewer copy can't misapply factors.
-- Warn (console `NOTE:` + export info `warnings`) that the shape is Open Rails only, and when PBR textures export as ACE instead of DDS.
-- Classic exports must stay byte-identical; test both paths.
+- Material setting `Shading` = `CLASSIC` (default) / `PBR`, plus `OrmFilepath` and `NormalFilepath` overrides; the panel shows the PBR rows and an "Open Rails only" box only for PBR.
+- Shaders: `PbrTexDiff` (Opaque, Clip; alpha test stays in the prim state) and `BlendAPbrTexDiff` (Alpha, Alpha Sorted). PBR takes precedence over the EMISSIVE `Tex`/`BlendATex` choice; Lighting still sets the vertex state light material (-5 to -12). Emission goes to `emissive_factor`.
+- `tex_idxs`: base, ORM, normal; missing = `-1`; trailing missing slots dropped (`PbrTexIdxs`). Base is always present (`blank` when no image, as for Classic).
+- Discovery: panel path first, then shader nodes. ORM = image feeding Roughness/Metallic directly or through Separate Color / Separate RGB; normal = image feeding a Normal Map node. `IsLinkedToBaseColor` now ignores links into Normal Map and Separate Color/RGB nodes (their input is also called `Color`), which could previously pick a normal/ORM image as the base color.
+- Factors (glTF names: `base_color_factor`, `metallic_factor`, `roughness_factor`, `normal_scale`, `occlusion_strength`, `emissive_factor`) come from the Principled BSDF; a socket driven by a texture gets factor 1. Different factors make different prim states (`iPrimStateAdd` compares `PbrFactors`).
+- Sidecar `<shape>.s.tsre.json`: `{ "materials": { key: { prim_state_index, prim_state_name, ...factors } } }`. Key = prim state name when unique, else its index (exporter labels `<matrix>_<texture>` can repeat). Written on every export: other top-level keys in an existing sidecar are kept, `materials` is replaced or removed, and a file with nothing left is deleted. The TSRE task 03 sidecar layout was not available when this was written; if TSRE publishes different field names, change only `BuildPbrSidecar`/`PbrFactorsFrom`.
+- Warnings (console `NOTE:`, export info `warnings`, and a WARNING status report): Open Rails only; PBR material without ORM or normal; PBR with ACE references (Use DDS recommended). Export info schema stays 2 (warnings are an existing list).
+- `GetMSTSMaterialDetails` reads `blMaterial.original`: evaluated-mesh materials are depsgraph copies whose MSTS settings stay stale after script edits until the material is tagged. Affects Classic settings too (only where they were stale).
+- Tests: `tests/test_pbr_materials.py` (bpy-free helpers, AST-loaded) and `tests/blender_pbr_smoke.py` (headless export, sidecar merge/removal, Rebuild nodes): `blender --factory-startup -b --python tests/blender_pbr_smoke.py` with `PBR_OUT` for the output folder. Verified with Blender 4.5, 5.1 and 5.2.
+- Not done (later TSRE steps): MSTS test of the new shader names, clearcoat/reflective glass, generated tangents (viewer side).
