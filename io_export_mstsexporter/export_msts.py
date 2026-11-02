@@ -1,6 +1,6 @@
 bl_info = {     "name": "Export OpenRails/MSTS Shape File(.s)",
                 "author": "Wayne Campbell/Pete Willard",
-                "version": (5, 2, 5),
+                "version": (5, 2, 6),
                 "blender": (3, 8, 0),
                 "location": "File > Export > OpenRails/MSTS (.s)",
                 "description": "Export file to OpenRails/MSTS .S format",
@@ -31,6 +31,7 @@ For complete documentation, and CONTACT info see the Instructions included in th
 
 
 REVISION HISTORY
+2026-10-15      Released V5.2.6  - pkw - Export info schema 2: WHEELS/BOGIE running gear, COUPLER_F/R marker empties, warnings
 2026-09-18      Released V5.2.5  - pkw - Added OpenRails/MSTS export info sidecar reports
 2026-09-10      Released V5.2.4  - pkw - Copy source texture file when no matching ACE/DDS texture exists
 2026-09-10      Released V5.2.3  - pkw - Added optional copy of referenced ACE/DDS textures beside exported S files
@@ -1217,6 +1218,341 @@ def ExportLodSummaries( ):
 
 
 #####################################
+# Running gear and marker report ( export info schema_version 2 )
+#
+# The helpers from ExportInfoBaseName to SummarizeRunningGear are plain
+# Python ( no bpy ) so they can be unit tested outside Blender. They work on
+# simple records in OpenRails/MSTS coordinates: x = width, y = up, z = forward.
+#
+#   record = { 'name', 'type', 'ancestors' (nearest parent first),
+#              'origin' (x,y,z), 'bounds' (minx,maxx,miny,maxy,minz,maxz) or None }
+#
+# Modelers mark coupler strike points ( pulling face of the closed knuckle,
+# on the centerline, at coupler height ) with Blender EMPTY objects named
+# COUPLER_F and COUPLER_R. EMPTY objects never produce shape geometry.
+
+CouplerMarkerAliases = {
+    'COUPLER_F': 'COUPLER_F',
+    'COUPLER_FRONT': 'COUPLER_F',
+    'COUPLER_R': 'COUPLER_R',
+    'COUPLER_REAR': 'COUPLER_R',
+}
+
+AARCouplerHeightMeters = 0.8763    # 34.5 in nominal, top of rail to coupler centerline
+
+ExportInfoFeaturePrefixes = (
+    ( 'WIPER', 'wiper' ),
+    ( 'DOOR_', 'door' ),
+    ( 'MIRROR', 'mirror' ),
+    ( 'LEFTWINDOW', 'window' ),
+    ( 'RIGHTWINDOW', 'window' ),
+    ( 'UNLOADINGPARTS', 'unloading' ),
+    ( 'ORTSBELL', 'bell' ),
+    ( 'ORTSITEM', 'ortsitem' ),
+    ( 'ORTSBRAKECYLINDER', 'brake_rigging' ),
+    ( 'ORTSBRAKERIGGING', 'brake_rigging' ),
+    ( 'ORTSHANDBRAKE', 'handbrake' ),
+)
+
+
+#####################################
+def ExportInfoBaseName( name ):
+    # strip Blender duplicate suffixes ( WHEELS11.001 -> WHEELS11 ) so the same
+    # part copied or linked into several LOD collections is counted once
+    return re.sub( r'\.\d{3,}$', '', name )
+
+
+#####################################
+def ExportInfoPartKind( name ):
+
+    upper = ExportInfoBaseName( name ).upper()
+    if upper.startswith( 'BOGIE' ):
+        return 'bogie'
+    if upper.startswith( 'WHEELS' ):
+        return 'wheelset'
+    if 'PANTO' in upper:
+        for pantographNumber in ( '1','2','3','4' ):
+            if pantographNumber in upper:
+                return 'pantograph'
+        return None
+    for prefix, kind in ExportInfoFeaturePrefixes:
+        if upper.startswith( prefix ):
+            return kind
+    return None
+
+
+#####################################
+def ExportInfoBoundsDict( bounds ):
+
+    if bounds == None:
+        return None
+    minX, maxX, minY, maxY, minZ, maxZ = bounds
+    return {
+        "min_x": minX, "max_x": maxX,
+        "min_y": minY, "max_y": maxY,
+        "min_z": minZ, "max_z": maxZ,
+    }
+
+
+#####################################
+def SummarizeRunningGear( partRecords, markerRecords ):
+
+    warnings = []
+    parts = []
+    partsByName = {}
+
+    for record in sorted( partRecords, key = lambda r: r['name'] ):
+        kind = ExportInfoPartKind( record['name'] )
+        if kind == None:
+            continue
+        baseName = ExportInfoBaseName( record['name'] ).upper()
+        ancestors = [ ExportInfoBaseName( a ).upper() for a in record.get( 'ancestors', [] ) ]
+
+        # a WHEELS child of another WHEELS object ( eg WHEELS11.detail ) is part of
+        # that wheelset, not another axle; likewise for nested BOGIE parts
+        if kind == 'wheelset' and any( a.startswith( 'WHEELS' ) for a in ancestors ):
+            continue
+        if kind == 'bogie' and any( a.startswith( 'BOGIE' ) for a in ancestors ):
+            continue
+
+        if baseName in partsByName:
+            firstPart = partsByName[baseName]
+            firstPart['copies'] += 1
+            drift = max( abs( a - b ) for a, b in zip( firstPart['origin'], record['origin'] ) )
+            if drift > 0.01:
+                warnings.append( "%s copies are %.3f m apart; first copy ( %s ) used" % ( baseName, drift, firstPart['blender_name'] ) )
+            continue
+
+        bogieName = None
+        for eachAncestor in ancestors:
+            if eachAncestor.startswith( 'BOGIE' ):
+                bogieName = eachAncestor
+                break
+
+        part = {
+            "name": baseName,
+            "blender_name": record['name'],
+            "kind": kind,
+            "parent": ancestors[0] if ancestors else None,
+            "bogie": bogieName,
+            "origin": [ record['origin'][0], record['origin'][1], record['origin'][2] ],
+            "bounds": ExportInfoBoundsDict( record.get( 'bounds' ) ),
+            "copies": 1,
+        }
+        if kind == 'wheelset':
+            # the wheelset origin is the axle centre ( required for rotation ), and
+            # y = 0 is top of rail, so origin height is the tread radius;
+            # half the mesh height includes the flange
+            part['radius_from_origin_m'] = record['origin'][1]
+            if record.get( 'bounds' ) != None:
+                part['radius_from_bounds_m'] = ( record['bounds'][3] - record['bounds'][2] ) / 2.0
+        partsByName[baseName] = part
+        parts.append( part )
+
+    wheelsets = [ p for p in parts if p['kind'] == 'wheelset' ]
+    bogies = [ p for p in parts if p['kind'] == 'bogie' ]
+
+    # group wheelsets by bogie; wheelsets without a bogie ancestor are body mounted
+    groups = {}
+    for eachWheelset in wheelsets:
+        groups.setdefault( eachWheelset['bogie'] or 'BODY', [] ).append( eachWheelset )
+    for eachBogie in bogies:
+        groups.setdefault( eachBogie['name'], [] )
+
+    axlesPerGroup = {}
+    for groupName in sorted( groups ):
+        axlesPerGroup[groupName] = len( groups[groupName] )
+        if groupName != 'BODY' and len( groups[groupName] ) == 0:
+            warnings.append( groupName + " has no WHEELS parented to it" )
+
+    if bogies and 'BODY' in groups:
+        warnings.append( "WHEELS without a BOGIE parent on a car with bogies: " +
+                         ', '.join( w['name'] for w in groups['BODY'] ) +
+                         " ( fine for steam drivers / carrying wheels )" )
+
+    # wheel radius: prefer axle-centre height, fall back to half mesh height
+    wheelRadius = None
+    wheelRadiusSource = None
+    radii = []
+    for eachWheelset in wheelsets:
+        fromOrigin = eachWheelset['radius_from_origin_m']
+        if 0.15 <= fromOrigin <= 1.5:
+            radii.append( fromOrigin )
+            eachWheelset['radius_m'] = fromOrigin
+            eachWheelset['radius_source'] = 'axle_centre_height'
+        elif 'radius_from_bounds_m' in eachWheelset:
+            radii.append( eachWheelset['radius_from_bounds_m'] )
+            eachWheelset['radius_m'] = eachWheelset['radius_from_bounds_m']
+            eachWheelset['radius_source'] = 'mesh_height'
+            warnings.append( "%s origin is %.3f m above rail; radius taken from mesh height ( check wheelset origin / rail height )" % ( eachWheelset['name'], fromOrigin ) )
+    if radii:
+        primary = groups.get( bogies[0]['name'] ) if bogies else None
+        primaryWheelsets = [ w for w in ( primary or wheelsets ) if 'radius_m' in w ]
+        if not primaryWheelsets:
+            primaryWheelsets = [ w for w in wheelsets if 'radius_m' in w ]
+        primaryWheelsets.sort( key = lambda w: w['radius_m'] )
+        medianWheelset = primaryWheelsets[ len( primaryWheelsets ) // 2 ]
+        wheelRadius = medianWheelset['radius_m']
+        wheelRadiusSource = medianWheelset['radius_source']
+    for groupName, groupWheelsets in groups.items():
+        groupRadii = [ w['radius_m'] for w in groupWheelsets if 'radius_m' in w ]
+        if groupName != 'BODY' and groupRadii and max( groupRadii ) - min( groupRadii ) > 0.005:
+            warnings.append( groupName + " wheel radii differ by %.3f m" % ( max( groupRadii ) - min( groupRadii ) ) )
+
+    # rigid wheelbase: longest axle spread inside one bogie ( or the body group
+    # when there are no bogies; for steam this includes carrying wheels )
+    rigidWheelbase = None
+    for groupName, groupWheelsets in groups.items():
+        if bogies and groupName == 'BODY':
+            continue
+        if len( groupWheelsets ) >= 2:
+            zs = [ w['origin'][2] for w in groupWheelsets ]
+            spread = max( zs ) - min( zs )
+            if rigidWheelbase == None or spread > rigidWheelbase:
+                rigidWheelbase = spread
+
+    bogieCentre = None
+    if len( bogies ) >= 2:
+        zs = [ b['origin'][2] for b in bogies ]
+        bogieCentre = max( zs ) - min( zs )
+
+    features = {}
+    for eachPart in parts:
+        if eachPart['kind'] not in ( 'bogie', 'wheelset' ):
+            features[eachPart['kind']] = features.get( eachPart['kind'], 0 ) + 1
+
+    runningGear = {
+        "axles": len( wheelsets ),
+        "bogies": len( bogies ),
+        "axles_per_group": axlesPerGroup,
+        "body_axles": len( groups.get( 'BODY', [] ) ),
+        "wheel_radius_m": wheelRadius,
+        "wheel_radius_source": wheelRadiusSource,
+        "rigid_wheelbase_m": rigidWheelbase,
+        "bogie_centre_m": bogieCentre,
+        "features": features,
+    }
+    if not wheelsets:
+        warnings.append( "No WHEELS objects found; axle count unknown" )
+
+    # coupler markers
+    markers = {}
+    for record in sorted( markerRecords, key = lambda r: r['name'] ):
+        key = CouplerMarkerAliases.get( ExportInfoBaseName( record['name'] ).upper() )
+        if key == None:
+            continue
+        if key in markers:
+            warnings.append( "Duplicate %s marker '%s' ignored; using '%s'" % ( key, record['name'], markers[key]['blender_name'] ) )
+            continue
+        if record.get( 'type' ) != 'EMPTY':
+            warnings.append( "%s is a %s object; use an EMPTY so it is not exported as geometry" % ( record['name'], record.get( 'type' ) ) )
+        markers[key] = {
+            "blender_name": record['name'],
+            "type": record.get( 'type' ),
+            "position": [ record['origin'][0], record['origin'][1], record['origin'][2] ],
+        }
+
+    couplers = None
+    front = markers.get( 'COUPLER_F' )
+    rear = markers.get( 'COUPLER_R' )
+    if front and rear:
+        fx, fy, fz = front['position']
+        rx, ry, rz = rear['position']
+        faceLength = fz - rz
+        if faceLength <= 0:
+            warnings.append( "COUPLER_F is behind COUPLER_R ( front is +Y in Blender ); markers may be swapped" )
+            faceLength = abs( faceLength )
+        couplerHeight = ( fy + ry ) / 2.0
+        couplers = {
+            "face_length_m": faceLength,
+            "centre_offset_m": ( fz + rz ) / 2.0,
+            "height_m": couplerHeight,
+            "height_difference_m": fy - ry,
+            "lateral_offset_m": max( abs( fx ), abs( rx ) ),
+            "aar_nominal_height_m": AARCouplerHeightMeters,
+        }
+        if abs( couplers['centre_offset_m'] ) > 0.01:
+            warnings.append( "Model is not centred between coupler faces ( offset %.3f m ); cars will gap/overlap in a consist" % couplers['centre_offset_m'] )
+        if abs( couplers['height_difference_m'] ) > 0.01:
+            warnings.append( "Front/rear coupler heights differ by %.3f m" % couplers['height_difference_m'] )
+        if couplers['lateral_offset_m'] > 0.01:
+            warnings.append( "Coupler marker is %.3f m off the centerline" % couplers['lateral_offset_m'] )
+        if abs( couplerHeight - AARCouplerHeightMeters ) > 0.05:
+            warnings.append( "Coupler height %.3f m differs from AAR nominal %.3f m ( ignore for non-AAR stock )" % ( couplerHeight, AARCouplerHeightMeters ) )
+    elif front or rear:
+        warnings.append( "Only one coupler marker found; add both COUPLER_F and COUPLER_R" )
+    else:
+        warnings.append( "No COUPLER_F / COUPLER_R empties; coupler face length must come from mesh bounds" )
+
+    return {
+        "running_gear": runningGear,
+        "couplers": couplers,
+        "markers": markers,
+        "parts": parts,
+        "warnings": warnings,
+    }
+
+
+#####################################
+def ExportInfoRecordFromObject( blenderObject ):
+
+    ancestors = []
+    parentObject = blenderObject.parent
+    while parentObject != None:
+        ancestors.append( parentObject.name )
+        parentObject = parentObject.parent
+
+    origin = MSTSVectorFromBlender( blenderObject.matrix_world.translation )
+
+    bounds = None
+    if blenderObject.type == 'MESH':
+        corners = [ blenderObject.matrix_world @ mathutils.Vector( corner ) for corner in blenderObject.bound_box ]
+        xs = [ c.x for c in corners ]
+        ys = [ c.z for c in corners ]   # OR y = Blender z
+        zs = [ c.y for c in corners ]   # OR z = Blender y
+        bounds = ( min( xs ), max( xs ), min( ys ), max( ys ), min( zs ), max( zs ) )
+
+    return {
+        'name': blenderObject.name,
+        'type': blenderObject.type,
+        'ancestors': ancestors,
+        'origin': ( origin[0], origin[1], origin[2] ),
+        'bounds': bounds,
+    }
+
+
+#####################################
+def ExportRunningGearInfo( ):
+
+    # parts: objects that are actually exported ( in a LOD collection )
+    partRecords = []
+    seenObjects = set()
+    for eachLodCollection in LodCollections:
+        for eachObject in eachLodCollection.all_objects:
+            if eachObject.name in seenObjects:
+                continue
+            seenObjects.add( eachObject.name )
+            if ExportInfoPartKind( eachObject.name ) != None:
+                partRecords.append( ExportInfoRecordFromObject( eachObject ) )
+
+    # markers: anywhere in the scene, they do not need to be in a LOD collection
+    markerRecords = []
+    for eachObject in bpy.context.scene.objects:
+        if ExportInfoBaseName( eachObject.name ).upper() in CouplerMarkerAliases:
+            markerRecords.append( ExportInfoRecordFromObject( eachObject ) )
+
+    return SummarizeRunningGear( partRecords, markerRecords )
+
+
+#####################################
+def FormatOptionalMeters( value ):
+
+    if value == None:
+        return "n/a"
+    return FormatMeters( value ) + "m"
+
+
+#####################################
 def FormatMeters( value ):
 
     return ( f"{value:.6f}" ).rstrip( '0' ).rstrip( '.' )
@@ -1233,10 +1569,13 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
     textPath = basePath + '_export_info.txt'
     bounds = ExportBoundsInfo()
     lodSummaries = ExportLodSummaries()
+    runningGearInfo = ExportRunningGearInfo()
+    runningGear = runningGearInfo["running_gear"]
+    couplers = runningGearInfo["couplers"]
 
     exportInfo = {
         "schema": "msts_orts_export_info",
-        "schema_version": 1,
+        "schema_version": 2,
         "shape_file": os.path.basename( MSTSFilePath ),
         "units": "meters",
         "coordinate_system": "OpenRails/MSTS",
@@ -1256,6 +1595,11 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
         },
         "images": list( ExportShape.Images ),
         "lods": lodSummaries,
+        "running_gear": runningGear,
+        "couplers": couplers,
+        "markers": runningGearInfo["markers"],
+        "parts": runningGearInfo["parts"],
+        "warnings": runningGearInfo["warnings"],
     }
 
     with open( jsonPath, 'w', encoding='utf-8' ) as jsonFile:
@@ -1294,6 +1638,38 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
     for eachImage in ExportShape.Images:
         lines.append( eachImage )
 
+    lines.extend( [
+        "",
+        "Running Gear:",
+        "Axles: " + str( runningGear["axles"] ),
+        "Bogies: " + str( runningGear["bogies"] ),
+    ] )
+    for groupName, axleCount in runningGear["axles_per_group"].items():
+        lines.append( "  " + groupName + ": " + str( axleCount ) + " axles" )
+    lines.extend( [
+        "Wheel Radius: " + FormatOptionalMeters( runningGear["wheel_radius_m"] ) +
+            ( " ( from " + runningGear["wheel_radius_source"] + " )" if runningGear["wheel_radius_source"] else "" ),
+        "Rigid Wheelbase: " + FormatOptionalMeters( runningGear["rigid_wheelbase_m"] ),
+        "Bogie Centres: " + FormatOptionalMeters( runningGear["bogie_centre_m"] ),
+    ] )
+    if runningGear["features"]:
+        lines.append( "Features: " + ', '.join( k + " x" + str( v ) for k, v in sorted( runningGear["features"].items() ) ) )
+
+    lines.extend( [ "", "Couplers:" ] )
+    if couplers:
+        lines.extend( [
+            "Coupler Face Length: " + FormatOptionalMeters( couplers["face_length_m"] ),
+            "Coupler Height: " + FormatOptionalMeters( couplers["height_m"] ),
+            "Centre Offset: " + FormatOptionalMeters( couplers["centre_offset_m"] ),
+        ] )
+    else:
+        lines.append( "No COUPLER_F / COUPLER_R markers" )
+
+    if runningGearInfo["warnings"]:
+        lines.extend( [ "", "Warnings:" ] )
+        for eachWarning in runningGearInfo["warnings"]:
+            lines.append( "- " + eachWarning )
+
     with open( textPath, 'w', encoding='utf-8', newline='\n' ) as textFile:
         textFile.write( '\n'.join( lines ) )
         textFile.write( '\n' )
@@ -1301,6 +1677,8 @@ def WriteExportInfoFiles( MSTSFilePath, volumeSphere ):
     print( "EXPORT INFO:" )
     print( "   ", jsonPath )
     print( "   ", textPath )
+    for eachWarning in runningGearInfo["warnings"]:
+        print( "    NOTE:", eachWarning )
 
 
 #####################################

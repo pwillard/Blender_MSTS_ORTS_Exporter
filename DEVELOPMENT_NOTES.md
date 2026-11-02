@@ -105,4 +105,35 @@ The report includes:
 - exported image list
 - LOD triangle and draw-call summary
 
+Schema version 2 (V5.2.6) adds, without renaming any v1 field:
+
+- `running_gear`: axles, bogies, axles_per_group, body_axles, wheel_radius_m (+ source), rigid_wheelbase_m, bogie_centre_m, features (pantograph/wiper/door/... counts)
+- `couplers`: face_length_m, centre_offset_m, height_m, height_difference_m, lateral_offset_m (null when markers are missing)
+- `markers`: COUPLER_F / COUPLER_R positions (aliases COUPLER_FRONT / COUPLER_REAR)
+- `parts`: BOGIE*/WHEELS*/feature parts with parent, bogie, origin, bounds, copies
+- `warnings`: informational list; also printed as `NOTE:` lines on the console
+
+Implementation notes:
+
+- `SummarizeRunningGear()` and its helpers are bpy-free and unit tested in `tests/test_export_info.py` (loaded via AST like `test_animated_names.py`).
+- `ExportRunningGearInfo()` collects parts only from LOD collections (what is exported) and markers from the whole scene.
+- Wheel radius = wheelset origin height above rail (Y = 0); falls back to half mesh height (includes flange) when the origin is not between 0.15 m and 1.5 m.
+- Only MESH objects become geometry, so marker Empties never reach the .s file.
+- Headless check: `blender --background --factory-startup --python tests/blender_smoke_export_info.py` (set `SMOKE_OUT` to choose the output folder). Verified with Blender 4.5 and 5.2.
+- Consumer: ENGWAGtool (`C:\dev\git\ENGWAGtool`) uses these fields to seed .eng/.wag files.
+
 Keep the JSON schema stable unless OpenRails Engineer is updated at the same time. Add fields rather than renaming existing ones when possible.
+
+## Planned: PBR materials (Open Rails only)
+
+Status: design only, not implemented. Driven by the TSRE/Shape Viewer PBR S-material proposal.
+
+Decision: PBR export is an Open Rails only option. MSTS behavior with the new shader names is unknown, so the classic path stays the default and is unchanged.
+
+- Opt-in per material (e.g. a `Shading` setting: Classic / PBR (Open Rails only)); default Classic.
+- PBR shaders: `PbrTexDiff` (Opaque, Clip) and `BlendAPbrTexDiff` (Alpha, Alpha Sorted). EMISSIVE has no PBR mapping yet; decide before implementing.
+- `tex_idxs` becomes base colour, ORM, normal; a missing slot is `-1`. `PrimState.Write` already writes a variable count.
+- Texture discovery: Base Color image as now; ORM = image feeding Roughness/Metallic via Separate Color (glTF style); normal = image feeding a Normal Map node; plus optional file path overrides like `BaseColorFilepath`.
+- Factors go to the `<shape>.s.tsre.json` sidecar (materials object). Prim state labels (`<matrix>_<texture>`) are not unique, so key by index or make labels unique for PBR shapes. Always rewrite (or delete when no PBR materials) the sidecar on export so a stale Shape Viewer copy can't misapply factors.
+- Warn (console `NOTE:` + export info `warnings`) that the shape is Open Rails only, and when PBR textures export as ACE instead of DDS.
+- Classic exports must stay byte-identical; test both paths.

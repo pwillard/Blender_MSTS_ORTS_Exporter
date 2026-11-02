@@ -13,7 +13,7 @@ The current add-on ZIP from the GitHub Releases page can be installed directly f
 
 * Choose the down-arrow in the upper right for the "Install from File" option
 
-* Select the Exporter Add-On ZIP file, for example `MSTS_ORTS_Exporter_AddOn_v5.2.5.zip`.
+* Select the Exporter Add-On ZIP file, for example `MSTS_ORTS_Exporter_AddOn_v5.2.6.zip`.
 
 * Enable OpenRails/MSTS Shape Exporter ( Enable the CHECK mark, if not selected) .
 
@@ -192,7 +192,7 @@ image::images/image7.png[]
 in the shape file for users wanting better compatibility with external utilities such as Polymaster.
 * USE DDS - This option, when checked, will export the .s file with textures referenced as DDS files instead of ACE
 * COPY TEXTURES - This option copies texture files beside the exported .s file. If an ACE or DDS file matching the material base name exists, that runtime texture is copied. If no matching ACE/DDS file exists, the source texture used in Blender, such as BMP, TGA, or PNG, is copied instead. The exporter does not convert image formats.
-* WRITE EXPORT INFO - This option writes `<shape>_export_info.json` and `<shape>_export_info.txt` beside the exported .s file. These sidecar files report the Open Rails/MSTS bounding box, volume sphere, exported image list, and LOD triangle/draw-call summary.
+* WRITE EXPORT INFO - This option writes `<shape>_export_info.json` and `<shape>_export_info.txt` beside the exported .s file. These sidecar files report the Open Rails/MSTS bounding box, volume sphere, exported image list, LOD triangle/draw-call summary, running gear (axles, bogies, wheel radius, wheelbase), and coupler marker measurements. See <<Export Info For Rolling Stock>>.
 * Initiate the file export.
 * Results will appear on the status panel at the bottom of the screen.
 
@@ -406,6 +406,36 @@ FINISHED OK
 <9> The second LOD level is shown at here. It has just a single Draw. There are big performance benefits to organizing your distant LODs to use a single draw
 
 If `Write Export Info` is enabled, the exporter also writes JSON and text sidecar files beside the exported shape. The JSON file is intended for tools such as OpenRails Engineer. It uses Open Rails/MSTS coordinates, where X is width/right, Y is height/up, and Z is length/forward. The text file is a quick human-readable bounding box report.
+
+=== Export Info For Rolling Stock
+
+Tools that build Open Rails `.eng` and `.wag` files can read the running gear and coupler information from `<shape>_export_info.json` (schema version 2).
+
+*Running gear* is found automatically from the standard part names:
+
+* Every object whose name starts with *WHEELS* is one axle (wheelset). Copies of the same part in several LOD collections, such as `WHEELS11.001`, are counted once. A WHEELS object parented to another WHEELS object (for example `WHEELS11.detail`) is treated as part of that wheelset.
+* WHEELS parented (directly or indirectly) to *BOGIE1* or *BOGIE2* are bogie axles. WHEELS parented to nothing else are body-mounted axles, such as steam drivers or two-axle cars.
+* Wheel radius is the height of the WHEELS object origin above the rail (Y = 0 in Open Rails, Z = 0 in Blender). Keep the wheelset origin at the axle centre, which is also needed for the wheels to rotate correctly. If the origin is not at a believable height, half the mesh height is used instead, which includes the flange.
+* Rigid wheelbase is the longest axle spacing within one bogie. Bogie centres is the distance between BOGIE1 and BOGIE2.
+
+*Coupler markers* are Blender Empty objects that you place yourself:
+
+[cols="1,3"]
+|===
+|Name |Placement
+
+|COUPLER_F
+|Front coupler (the +Y end in Blender). Place it on the car centreline, at the pulling face of the closed knuckle (the strike point), at coupler height.
+
+|COUPLER_R
+|Rear coupler (the -Y end in Blender), placed the same way.
+|===
+
+* COUPLER_FRONT and COUPLER_REAR are also accepted.
+* Use *Add > Empty > Plain Axes*. Empties are never written into the .s file, and they do not need to be in a LOD collection.
+* From the two markers the report gives the coupler face length (the value Open Rails uses for car spacing), the coupler height, and the centre offset.
+
+The report adds warnings when, for example, a bogie has no wheels, the model is not centred between the coupler faces, the front and rear coupler heights differ, the markers appear swapped, or a marker is a mesh instead of an Empty. Warnings are informational; the export still completes.
 
 
 <<<

@@ -1,5 +1,9 @@
 # README
 
+October 15, 2026
+
+Release 5.2.6 - Export info schema 2: counts WHEELS*/BOGIE* running gear (axles, bogies, wheel radius, rigid wheelbase, bogie centres) and reads optional COUPLER_F / COUPLER_R Empty markers for coupler face length, coupler height, and centring checks. Warnings are written to the sidecar files and the console.
+
 September 18, 2026
 
 Release 5.2.5 - Adds a Write Export Info option that writes OpenRails/MSTS bounding box and export summary sidecar files beside the exported S file.

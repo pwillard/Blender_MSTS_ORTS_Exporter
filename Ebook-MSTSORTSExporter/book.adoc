@@ -35,8 +35,8 @@
 :BR: }
 :sourcedir: code
 :source-highlighter: rouge
-:revnumber: .5
-:revdate: 2026-09-18
+:revnumber: .6
+:revdate: 2026-10-15
 :OR: Open Rails
 :ORTS: Open Rails Train Simulator
 :MSTS: Microsoft Train Simulator
@@ -72,12 +72,13 @@ others where its available.
 
 Blender 3.8+ Exporter for MSTS/OR, verified with Blender 5.2 LTS
 
-* Version 5.2.5
+* Version 5.2.6
 * This is a script addon for the Blender 3D program. Use it to create .S shape files for Microsoft Train Simulator or Open Rails.
 * This version of the EXPORTER is for Blender 3.8 and newer. It has been updated for current Blender 5.x releases while retaining compatibility with older supported Blender versions where possible. Use V3.5 of the exporter for Blender versions before 2.8.
 
 === REVISION HISTORY
 
+    2026-10-15      Released V5.2.6 - pkw - Export info schema 2: running gear summary and COUPLER_F/R marker empties
     2026-09-18      Released V5.2.5 - pkw - Added OpenRails/MSTS export info sidecar reports
     2026-09-10      Released V5.2.4 - pkw - Copy source texture file when no matching ACE/DDS texture exists
     2026-09-10      Released V5.2.3 - pkw - Added optional copy of referenced ACE/DDS textures beside exported S files
